@@ -38,20 +38,25 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   // Resolve pending shares when a user signs in
   async function resolvePendingShares(signedInUser: User) {
-    if (resolvedRef.current) return
+    if (resolvedRef.current || !signedInUser.email) return
     resolvedRef.current = true
     try {
-      await supabase
+      const { error } = await supabase
         .from('audit_shares')
         .update({
           shared_with_user_id: signedInUser.id,
           status: 'accepted',
           accepted_at: new Date().toISOString(),
         })
-        .eq('shared_with_email', signedInUser.email!)
+        .eq('shared_with_email', signedInUser.email)
         .is('shared_with_user_id', null)
+
+      if (error) {
+        // Non-fatal — shares will resolve on next login after RLS fix
+        console.warn('Could not resolve pending shares:', error.message)
+      }
     } catch (err) {
-      console.error('Error resolving pending shares:', err)
+      console.warn('Error resolving pending shares:', err)
     }
   }
 
