@@ -63,6 +63,19 @@ export type TypographyToken = {
   }[]
 }
 
+// Sharing types
+export type AuditShare = {
+  id: string
+  audit_id: string
+  shared_with_user_id?: string
+  shared_with_email: string
+  role: 'commenter' | 'editor'
+  invited_by: string
+  status: 'pending' | 'accepted'
+  created_at: string
+  accepted_at?: string
+}
+
 // Annotation types for canvas annotations (FigJam-style)
 export type AnnotationType = 'sticky_note' | 'text' | 'rectangle' | 'circle' | 'line' | 'arrow'
 

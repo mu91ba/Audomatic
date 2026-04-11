@@ -44,19 +44,20 @@ interface AuditCanvasProps {
   auditId: string
   pages: PageType[]
   auditStatus: string
+  userRole?: 'owner' | 'commenter'
 }
 
 // Wrapper component that provides ReactFlow context
-export function AuditCanvas({ auditId, pages, auditStatus }: AuditCanvasProps) {
+export function AuditCanvas({ auditId, pages, auditStatus, userRole = 'owner' }: AuditCanvasProps) {
   return (
     <ReactFlowProvider>
-      <AuditCanvasInner auditId={auditId} pages={pages} auditStatus={auditStatus} />
+      <AuditCanvasInner auditId={auditId} pages={pages} auditStatus={auditStatus} userRole={userRole} />
     </ReactFlowProvider>
   )
 }
 
 // Inner component that can use useReactFlow hook
-function AuditCanvasInner({ auditId, pages, auditStatus }: AuditCanvasProps) {
+function AuditCanvasInner({ auditId, pages, auditStatus, userRole }: AuditCanvasProps) {
   // Get React Flow instance for coordinate conversion
   const { screenToFlowPosition } = useReactFlow()
   const [nodes, setNodes, onNodesChange] = useNodesState([])
@@ -296,8 +297,8 @@ function AuditCanvasInner({ auditId, pages, auditStatus }: AuditCanvasProps) {
           setActiveTool('arrow'); break
         case 'delete':
         case 'backspace':
-          // Delete selected annotation nodes
-          handleDeleteSelected()
+          // Delete selected annotation nodes (owner only)
+          if (userRole === 'owner') handleDeleteSelected()
           break
       }
     }

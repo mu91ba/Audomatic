@@ -3,24 +3,27 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { supabase, type Audit } from '@/lib/supabase'
+import { supabase, type Audit, type AuditShare } from '@/lib/supabase'
 import { useAuth } from '@/components/auth/auth-provider'
 import { UserMenu } from '@/components/auth/user-menu'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { 
-  Loader2, 
-  Plus, 
-  ExternalLink, 
-  Clock, 
-  CheckCircle2, 
-  AlertCircle, 
+import {
+  Loader2,
+  Plus,
+  ExternalLink,
+  Clock,
+  CheckCircle2,
+  AlertCircle,
   Sparkles,
-  Trash2
+  Trash2,
+  Users
 } from 'lucide-react'
 
+type AuditWithOwnership = Audit & { isOwner: boolean }
+
 export default function AuditsPage() {
-  const [audits, setAudits] = useState<Audit[]>([])
+  const [audits, setAudits] = useState<AuditWithOwnership[]>([])
   const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState<string | null>(null)
   const { user, loading: authLoading } = useAuth()
@@ -40,13 +43,28 @@ export default function AuditsPage() {
 
   async function loadAudits() {
     try {
-      const { data, error } = await supabase
+      // Load own audits
+      const { data: ownAudits, error: ownError } = await supabase
         .from('audits')
         .select('*')
         .order('created_at', { ascending: false })
 
-      if (error) throw error
-      setAudits(data || [])
+      if (ownError) throw ownError
+
+      // Load shared audits via audit_shares
+      const { data: shares } = await supabase
+        .from('audit_shares')
+        .select('audit_id')
+
+      const sharedAuditIds = new Set((shares || []).map(s => s.audit_id))
+
+      // Mark ownership
+      const allAudits: AuditWithOwnership[] = (ownAudits || []).map(a => ({
+        ...a,
+        isOwner: a.user_id === user?.id || a.user_id === null,
+      }))
+
+      setAudits(allAudits)
     } catch (err) {
       console.error('Error loading audits:', err)
     } finally {
@@ -211,7 +229,7 @@ export default function AuditsPage() {
                     <div className="flex items-center justify-between">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-3">
-                          <Link 
+                          <Link
                             href={`/audit/${audit.id}`}
                             className="font-semibold text-lg hover:text-primary transition-colors truncate"
                           >
@@ -221,6 +239,12 @@ export default function AuditsPage() {
                             {statusBadge.icon}
                             {statusBadge.label}
                           </span>
+                          {!audit.isOwner && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                              <Users className="h-3 w-3" />
+                              Shared
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
                           <span className="truncate max-w-md">{audit.url}</span>
@@ -249,20 +273,22 @@ export default function AuditsPage() {
                             View Audit
                           </Button>
                         </Link>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-muted-foreground hover:text-destructive"
-                          onClick={() => deleteAudit(audit.id)}
-                          disabled={deleting === audit.id}
-                          title="Delete audit"
-                        >
-                          {deleting === audit.id ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-4 w-4" />
-                          )}
-                        </Button>
+                        {audit.isOwner && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-muted-foreground hover:text-destructive"
+                            onClick={() => deleteAudit(audit.id)}
+                            disabled={deleting === audit.id}
+                            title="Delete audit"
+                          >
+                            {deleting === audit.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </CardContent>

@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react'
 import { User, Session } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 
@@ -34,21 +34,45 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null)
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
+  const resolvedRef = useRef(false)
+
+  // Resolve pending shares when a user signs in
+  async function resolvePendingShares(signedInUser: User) {
+    if (resolvedRef.current) return
+    resolvedRef.current = true
+    try {
+      await supabase
+        .from('audit_shares')
+        .update({
+          shared_with_user_id: signedInUser.id,
+          status: 'accepted',
+          accepted_at: new Date().toISOString(),
+        })
+        .eq('shared_with_email', signedInUser.email!)
+        .is('shared_with_user_id', null)
+    } catch (err) {
+      console.error('Error resolving pending shares:', err)
+    }
+  }
 
   useEffect(() => {
     // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session)
       setUser(session?.user ?? null)
+      if (session?.user) resolvePendingShares(session.user)
       setLoading(false)
     })
 
     // Listen for auth changes
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session)
       setUser(session?.user ?? null)
+      if (event === 'SIGNED_IN' && session?.user) {
+        resolvePendingShares(session.user)
+      }
       setLoading(false)
     })
 

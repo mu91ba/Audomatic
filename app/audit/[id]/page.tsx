@@ -5,10 +5,12 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { supabase, type Audit, type Page as PageType } from '@/lib/supabase'
 import { AuditCanvas } from '@/components/audit-canvas'
-import { Loader2, AlertCircle, CheckCircle2, Home, Sheet, FileDown } from 'lucide-react'
+import { Loader2, AlertCircle, CheckCircle2, Home, Sheet, FileDown, Users } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { UserMenu } from '@/components/auth/user-menu'
+import { ShareModal } from '@/components/share-modal'
+import { useAuth } from '@/components/auth/auth-provider'
 
 export default function AuditPage() {
   const params = useParams()
@@ -21,6 +23,10 @@ export default function AuditPage() {
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
   const [exportingPdf, setExportingPdf] = useState(false)
+  const [showShareModal, setShowShareModal] = useState(false)
+  const { user } = useAuth()
+
+  const isOwner = audit?.user_id === user?.id || audit?.user_id === null
 
   useEffect(() => {
     loadAuditData()
@@ -255,6 +261,13 @@ export default function AuditPage() {
                 )}
               </div>
             )}
+            {/* Shared badge for non-owners */}
+            {!isOwner && (
+              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                <Users className="h-3 w-3" />
+                Shared with you
+              </span>
+            )}
             {/* Show complete indicator and export button when done */}
             {isEffectivelyComplete && (
               <>
@@ -262,36 +275,52 @@ export default function AuditPage() {
                   <CheckCircle2 className="h-5 w-5" />
                   <span>Complete</span>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleExportToSheets}
-                  disabled={exporting}
-                  title="Export audit data to Google Sheets"
-                >
-                  {exporting
-                    ? <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    : <Sheet className="h-4 w-4 mr-2" />
-                  }
-                  {exporting ? 'Exporting...' : 'Export to Sheets'}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleExportToPdf}
-                  disabled={exportingPdf}
-                  title="Download visual PDF report"
-                >
-                  {exportingPdf
-                    ? <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    : <FileDown className="h-4 w-4 mr-2" />
-                  }
-                  {exportingPdf ? 'Generating...' : 'Export PDF'}
-                </Button>
+                {isOwner && (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleExportToSheets}
+                      disabled={exporting}
+                      title="Export audit data to Google Sheets"
+                    >
+                      {exporting
+                        ? <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        : <Sheet className="h-4 w-4 mr-2" />
+                      }
+                      {exporting ? 'Exporting...' : 'Export to Sheets'}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleExportToPdf}
+                      disabled={exportingPdf}
+                      title="Download visual PDF report"
+                    >
+                      {exportingPdf
+                        ? <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        : <FileDown className="h-4 w-4 mr-2" />
+                      }
+                      {exportingPdf ? 'Generating...' : 'Export PDF'}
+                    </Button>
+                  </>
+                )}
                 {exportError && (
                   <span className="text-sm text-destructive">{exportError}</span>
                 )}
               </>
+            )}
+            {/* Share button - owner only */}
+            {isOwner && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowShareModal(true)}
+                title="Share this audit"
+              >
+                <Users className="h-4 w-4 mr-2" />
+                Share
+              </Button>
             )}
             {/* User menu */}
             <UserMenu />
@@ -301,8 +330,13 @@ export default function AuditPage() {
 
       {/* Canvas */}
       <div className="flex-1">
-        <AuditCanvas auditId={auditId} pages={pages} auditStatus={audit?.status || 'pending'} />
+        <AuditCanvas auditId={auditId} pages={pages} auditStatus={audit?.status || 'pending'} userRole={isOwner ? 'owner' : 'commenter'} />
       </div>
+
+      {/* Share Modal */}
+      {showShareModal && (
+        <ShareModal auditId={auditId} onClose={() => setShowShareModal(false)} />
+      )}
     </div>
   )
 }
