@@ -29,11 +29,29 @@ export default function AuditPage() {
 
   const isOwner = audit?.user_id === user?.id || audit?.user_id === null
 
+  // Helper to determine if audit is effectively complete
+  const isEffectivelyComplete =
+    audit?.status === 'completed' ||
+    (audit?.status === 'processing' &&
+     audit.total_pages &&
+     audit.total_pages > 0 &&
+     audit.processed_pages === audit.total_pages)
+
   useEffect(() => {
     loadAuditData()
     const cleanup = subscribeToUpdates()
-    return cleanup  // Return the cleanup function to properly unsubscribe
+    return cleanup
   }, [auditId])
+
+  // Show "Complete" toast when status transitions to complete
+  useEffect(() => {
+    if (isEffectivelyComplete && !wasCompleteRef.current) {
+      wasCompleteRef.current = true
+      setShowCompleteToast(true)
+      const timer = setTimeout(() => setShowCompleteToast(false), 4000)
+      return () => clearTimeout(timer)
+    }
+  }, [isEffectivelyComplete])
 
   async function loadAuditData() {
     try {
@@ -160,25 +178,6 @@ export default function AuditPage() {
       setExporting(false)
     }
   }
-
-  // Helper to determine if audit is effectively complete
-  // (either status is completed, or all pages have been processed)
-  const isEffectivelyComplete = 
-    audit?.status === 'completed' || 
-    (audit?.status === 'processing' && 
-     audit.total_pages && 
-     audit.total_pages > 0 && 
-     audit.processed_pages === audit.total_pages)
-
-  // Show "Complete" toast when status transitions to complete
-  useEffect(() => {
-    if (isEffectivelyComplete && !wasCompleteRef.current) {
-      wasCompleteRef.current = true
-      setShowCompleteToast(true)
-      const timer = setTimeout(() => setShowCompleteToast(false), 4000)
-      return () => clearTimeout(timer)
-    }
-  }, [isEffectivelyComplete])
 
   // Helper to get display status text
   const getStatusText = () => {
