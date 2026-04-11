@@ -1,11 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { supabase, type Audit, type Page as PageType } from '@/lib/supabase'
 import { AuditCanvas } from '@/components/audit-canvas'
-import { Loader2, AlertCircle, CheckCircle2, Home, Sheet, FileDown, Users } from 'lucide-react'
+import { Loader2, AlertCircle, CheckCircle2, Home, Sheet, Users } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { UserMenu } from '@/components/auth/user-menu'
@@ -22,8 +22,9 @@ export default function AuditPage() {
   const [error, setError] = useState('')
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
-  const [exportingPdf, setExportingPdf] = useState(false)
   const [showShareModal, setShowShareModal] = useState(false)
+  const [showCompleteToast, setShowCompleteToast] = useState(false)
+  const wasCompleteRef = useRef(false)
   const { user } = useAuth()
 
   const isOwner = audit?.user_id === user?.id || audit?.user_id === null
@@ -160,43 +161,6 @@ export default function AuditPage() {
     }
   }
 
-  async function handleExportToPdf() {
-    setExportingPdf(true)
-    setExportError(null)
-    try {
-      const { data: { session } } = await supabase.auth.getSession()
-      const token = session?.access_token
-      if (!token) throw new Error('Not authenticated')
-      const res = await fetch('/api/export-pdf', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ auditId }),
-      })
-      if (!res.ok) {
-        const contentType = res.headers.get('content-type') || ''
-        if (contentType.includes('application/json')) {
-          const data = await res.json()
-          throw new Error(data.error || 'PDF export failed')
-        }
-        throw new Error(`PDF export failed (${res.status})`)
-      }
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `audit-report.pdf`
-      a.click()
-      URL.revokeObjectURL(url)
-    } catch (err: any) {
-      setExportError(err.message || 'PDF export failed')
-    } finally {
-      setExportingPdf(false)
-    }
-  }
-
   // Helper to determine if audit is effectively complete
   // (either status is completed, or all pages have been processed)
   const isEffectivelyComplete = 
@@ -205,6 +169,16 @@ export default function AuditPage() {
      audit.total_pages && 
      audit.total_pages > 0 && 
      audit.processed_pages === audit.total_pages)
+
+  // Show "Complete" toast when status transitions to complete
+  useEffect(() => {
+    if (isEffectivelyComplete && !wasCompleteRef.current) {
+      wasCompleteRef.current = true
+      setShowCompleteToast(true)
+      const timer = setTimeout(() => setShowCompleteToast(false), 4000)
+      return () => clearTimeout(timer)
+    }
+  }, [isEffectivelyComplete])
 
   // Helper to get display status text
   const getStatusText = () => {
@@ -268,43 +242,29 @@ export default function AuditPage() {
                 Shared with you
               </span>
             )}
-            {/* Show complete indicator and export button when done */}
-            {isEffectivelyComplete && (
+            {/* Complete toast — shows briefly then disappears */}
+            {showCompleteToast && (
+              <div className="flex items-center gap-2 text-green-600 font-medium animate-in fade-in duration-300">
+                <CheckCircle2 className="h-5 w-5" />
+                <span>Complete</span>
+              </div>
+            )}
+            {/* Export button — always visible when complete (owner only) */}
+            {isEffectivelyComplete && isOwner && (
               <>
-                <div className="flex items-center gap-2 text-green-600 font-medium">
-                  <CheckCircle2 className="h-5 w-5" />
-                  <span>Complete</span>
-                </div>
-                {isOwner && (
-                  <>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleExportToSheets}
-                      disabled={exporting}
-                      title="Export audit data to Google Sheets"
-                    >
-                      {exporting
-                        ? <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                        : <Sheet className="h-4 w-4 mr-2" />
-                      }
-                      {exporting ? 'Exporting...' : 'Export to Sheets'}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleExportToPdf}
-                      disabled={exportingPdf}
-                      title="Download visual PDF report"
-                    >
-                      {exportingPdf
-                        ? <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                        : <FileDown className="h-4 w-4 mr-2" />
-                      }
-                      {exportingPdf ? 'Generating...' : 'Export PDF'}
-                    </Button>
-                  </>
-                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleExportToSheets}
+                  disabled={exporting}
+                  title="Export audit data to Google Sheets"
+                >
+                  {exporting
+                    ? <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    : <Sheet className="h-4 w-4 mr-2" />
+                  }
+                  {exporting ? 'Exporting...' : 'Export to Sheets'}
+                </Button>
                 {exportError && (
                   <span className="text-sm text-destructive">{exportError}</span>
                 )}
