@@ -1,0 +1,287 @@
+{
+  "name": "Audomatic Export to Google Sheets",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "export-audit",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "export-webhook-trigger",
+      "name": "Export Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "audomatic-export"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.headers['x-export-secret'] }}",
+              "value2": "audomatic-export-secret-2026"
+            }
+          ]
+        }
+      },
+      "id": "validate-secret",
+      "name": "Validate Secret",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"error\": \"Unauthorized\" }",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "error-respond",
+      "name": "Unauthorized Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [470, 500]
+    },
+    {
+      "parameters": {
+        "url": "https://cmdybpjqhndjlfieilfg.supabase.co/rest/v1/pages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNtZHlicGpxaG5kamxmaWVpbGZnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MTIyNDI5NSwiZXhwIjoyMDc2ODAwMjk1fQ.xyyTUwxfT-8x6SsYZCOF-FyP7tRJQDl8MMyiOtyegUAx"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNtZHlicGpxaG5kamxmaWVpbGZnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MTIyNDI5NSwiZXhwIjoyMDc2ODAwMjk1fQ.xyyTUwxfT-8x6SsYZCOF-FyP7tRJQDl8MMyiOtyegUAx"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "audit_id",
+              "value": "={{ 'eq.' + $json.body.auditId }}"
+            },
+            {
+              "name": "order",
+              "value": "level.asc"
+            },
+            {
+              "name": "select",
+              "value": "*"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fetch-pages",
+      "name": "Fetch Pages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const pages = $input.first().json;\nconst auditUrl = $('Export Webhook').first().json.body.auditUrl;\n\n// Build URL → page lookup map\nconst urlMap = {};\nfor (const p of pages) {\n  urlMap[p.url] = p;\n}\n\n// Humanize a URL into a readable label\nfunction humanize(url) {\n  try {\n    const segs = new URL(url).pathname.split('/').filter(Boolean);\n    if (!segs.length) return 'Home';\n    return segs[segs.length - 1]\n      .replace(/[-_]/g, ' ')\n      .replace(/\\b\\w/g, c => c.toUpperCase());\n  } catch {\n    return url;\n  }\n}\n\n// Walk parent_url chain upward to build \"Home > Blog > Post Name\"\nfunction buildPath(page) {\n  const chain = [];\n  const visited = new Set();\n  let cur = page;\n  while (cur && !visited.has(cur.url)) {\n    visited.add(cur.url);\n    chain.unshift(cur.title || humanize(cur.url));\n    cur = cur.parent_url ? urlMap[cur.parent_url] : null;\n  }\n  return chain.join(' > ');\n}\n\nreturn pages.map(p => ({\n  json: {\n    'Page Name': p.title || humanize(p.url),\n    'URL': p.url,\n    'Navigation Path': buildPath(p),\n    'Tag': p.source === 'sitemap_only' ? 'Standalone' : 'Navigable',\n    'Visual': p.screenshot_url ? `=IMAGE(\"${p.screenshot_url}\")` : '',\n    'Notes': p.is_template ? `Template (${p.template_count} pages)` : ''\n  }\n}));"
+      },
+      "id": "build-rows",
+      "name": "Build Sheet Rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "title": "={{ 'Audit - ' + $('Export Webhook').first().json.body.auditUrl + ' - ' + new Date().toISOString().split('T')[0] }}",
+        "sheetsUi": {
+          "sheetValues": [
+            {
+              "title": "Pages"
+            }
+          ]
+        }
+      },
+      "id": "create-spreadsheet",
+      "name": "Create Spreadsheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1130, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-cred",
+          "name": "Make 10 Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "move",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $('Create Spreadsheet').first().json.spreadsheetId }}",
+          "mode": "id"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "1KBvVOuUbp-gcS9QMN3D0GCEDI2cf3NHd",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "move-to-folder",
+      "name": "Move to Audit Sheets Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1350, 300],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "google-sheets-cred",
+          "name": "Make 10 Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Create Spreadsheet').first().json.spreadsheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Pages",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData"
+        },
+        "options": {
+          "cellFormat": "USER_ENTERED"
+        }
+      },
+      "id": "append-rows",
+      "name": "Append Rows",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1570, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-cred",
+          "name": "Make 10 Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/' + $('Create Spreadsheet').first().json.spreadsheetId + '/edit' }) }}"
+      },
+      "id": "export-respond",
+      "name": "Respond with URL",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1790, 300]
+    }
+  ],
+  "connections": {
+    "Export Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Secret",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Secret": {
+      "main": [
+        [
+          {
+            "node": "Fetch Pages",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unauthorized Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Pages": {
+      "main": [
+        [
+          {
+            "node": "Build Sheet Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Sheet Rows": {
+      "main": [
+        [
+          {
+            "node": "Create Spreadsheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Spreadsheet": {
+      "main": [
+        [
+          {
+            "node": "Move to Audit Sheets Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Move to Audit Sheets Folder": {
+      "main": [
+        [
+          {
+            "node": "Append Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append Rows": {
+      "main": [
+        [
+          {
+            "node": "Respond with URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2026-04-02T00:00:00.000Z",
+  "versionId": "2"
+}
