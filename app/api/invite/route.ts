@@ -61,24 +61,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'This user has already been invited' }, { status: 409 })
     }
 
-    // Use service role client to look up user by email
-    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey)
+    // Create admin client for user lookup and invites
+    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    })
 
-    const { data: { users: existingUsers } } = await supabaseAdmin.auth.admin.listUsers()
-    const invitee = existingUsers?.find(u => u.email?.toLowerCase() === email.toLowerCase())
-
-    // Insert the share record
-    const shareData: Record<string, unknown> = {
+    // Insert share record using admin client (bypasses RLS)
+    const shareData = {
       audit_id: auditId,
       shared_with_email: email.toLowerCase(),
       role: 'commenter',
       invited_by: user.id,
-      status: invitee ? 'accepted' : 'pending',
-      shared_with_user_id: invitee?.id || null,
-      accepted_at: invitee ? new Date().toISOString() : null,
+      status: 'pending',
     }
 
-    const { data: share, error: shareError } = await supabase
+    const { data: share, error: shareError } = await supabaseAdmin
       .from('audit_shares')
       .insert(shareData)
       .select()
@@ -89,37 +86,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to create invite' }, { status: 500 })
     }
 
-    // Send invite email
-    if (!invitee) {
-      // New user — use Supabase Auth invite
-      const appUrl = request.headers.get('origin') || 'http://localhost:3000'
-      await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
+    // Send Supabase Auth invite email — works for both new and existing users
+    const appUrl = request.headers.get('origin') || 'http://localhost:3000'
+    try {
+      await supabaseAdmin.auth.admin.inviteUserByEmail(email.toLowerCase(), {
         redirectTo: `${appUrl}/audit/${auditId}`,
       })
-    } else {
-      // Existing user — send notification via Resend if configured
-      const resendApiKey = process.env.RESEND_API_KEY
-      if (resendApiKey) {
-        const appUrl = request.headers.get('origin') || 'http://localhost:3000'
-        try {
-          const { Resend } = await import('resend')
-          const resend = new Resend(resendApiKey)
-          await resend.emails.send({
-            from: 'Audomatic <noreply@audomatic.com>',
-            to: email,
-            subject: `You've been invited to view an audit on Audomatic`,
-            html: `
-              <h2>You've been invited to collaborate!</h2>
-              <p>${user.email} has shared a website audit with you on Audomatic.</p>
-              <p><strong>Website:</strong> ${audit.url}</p>
-              <p><a href="${appUrl}/audit/${auditId}" style="background:#000;color:#fff;padding:12px 24px;text-decoration:none;border-radius:6px;display:inline-block;">View Audit</a></p>
-            `,
-          })
-        } catch (emailErr) {
-          console.error('Error sending notification email:', emailErr)
-          // Non-fatal — the share was still created
-        }
-      }
+    } catch (emailErr) {
+      console.error('Error sending invite email:', emailErr)
+      // Non-fatal — share was still created, user can access when they log in
     }
 
     return NextResponse.json({ success: true, share })
