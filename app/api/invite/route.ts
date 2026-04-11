@@ -66,13 +66,21 @@ export async function POST(request: NextRequest) {
       auth: { autoRefreshToken: false, persistSession: false },
     })
 
+    // Check if invitee already has an account
+    const { data: existingUsers } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
+    const invitee = existingUsers?.users?.find(
+      u => u.email?.toLowerCase() === email.toLowerCase()
+    )
+
     // Insert share record using admin client (bypasses RLS)
     const shareData = {
       audit_id: auditId,
       shared_with_email: email.toLowerCase(),
       role: 'commenter',
       invited_by: user.id,
-      status: 'pending',
+      status: invitee ? 'accepted' : 'pending',
+      shared_with_user_id: invitee?.id || null,
+      accepted_at: invitee ? new Date().toISOString() : null,
     }
 
     const { data: share, error: shareError } = await supabaseAdmin
@@ -86,15 +94,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to create invite' }, { status: 500 })
     }
 
-    // Send Supabase Auth invite email — works for both new and existing users
-    const appUrl = request.headers.get('origin') || 'http://localhost:3000'
-    try {
-      await supabaseAdmin.auth.admin.inviteUserByEmail(email.toLowerCase(), {
-        redirectTo: `${appUrl}/audit/${auditId}`,
-      })
-    } catch (emailErr) {
-      console.error('Error sending invite email:', emailErr)
-      // Non-fatal — share was still created, user can access when they log in
+    // Only send Supabase invite email for NEW users (not existing accounts)
+    if (!invitee) {
+      const appUrl = request.headers.get('origin') || 'http://localhost:3000'
+      try {
+        await supabaseAdmin.auth.admin.inviteUserByEmail(email.toLowerCase(), {
+          redirectTo: `${appUrl}/audit/${auditId}`,
+        })
+      } catch (emailErr) {
+        console.error('Error sending invite email:', emailErr)
+      }
     }
 
     return NextResponse.json({ success: true, share })
