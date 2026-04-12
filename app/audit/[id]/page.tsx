@@ -289,7 +289,13 @@ export default function AuditPage() {
 
       {/* Canvas */}
       <div className="flex-1">
-        <AuditCanvas auditId={auditId} pages={pages} auditStatus={audit?.status || 'pending'} userRole={isOwner ? 'owner' : 'commenter'} />
+        <AuditCanvas
+          auditId={auditId}
+          pages={pages}
+          auditStatus={audit?.status || 'pending'}
+          userRole={isOwner ? 'owner' : 'commenter'}
+          initialCanvasLayout={audit?.canvas_layout ?? null}
+        />
       </div>
 
       {/* Share Modal */}

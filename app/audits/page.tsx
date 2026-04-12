@@ -5,7 +5,8 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { supabase, type Audit, type AuditShare } from '@/lib/supabase'
 import { useAuth } from '@/components/auth/auth-provider'
-import { UserMenu } from '@/components/auth/user-menu'
+import { isInvitee } from '@/lib/role'
+import { AppHeader } from '@/components/app-header'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -15,7 +16,6 @@ import {
   Clock,
   CheckCircle2,
   AlertCircle,
-  Sparkles,
   Trash2,
   Users
 } from 'lucide-react'
@@ -79,16 +79,20 @@ export default function AuditsPage() {
 
     setDeleting(auditId)
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('audits')
         .delete()
         .eq('id', auditId)
+        .select()
 
       if (error) throw error
+      if (!data || data.length === 0) {
+        throw new Error('Delete was blocked — you may not have permission to delete this audit.')
+      }
       setAudits(audits.filter(a => a.id !== auditId))
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error deleting audit:', err)
-      alert('Failed to delete audit')
+      alert(err?.message || 'Failed to delete audit')
     } finally {
       setDeleting(null)
     }
@@ -171,34 +175,33 @@ export default function AuditsPage() {
     return null // Will redirect
   }
 
+  const userIsInvitee = isInvitee(user)
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
-      {/* Header */}
-      <header className="border-b bg-background px-6 py-4">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <Link href="/audits" className="flex items-center gap-2">
-            <Sparkles className="h-6 w-6 text-primary" />
-            <span className="text-xl font-bold">Audomatic</span>
-          </Link>
-          <UserMenu />
-        </div>
-      </header>
+      <AppHeader homeHref="/audits" />
 
       {/* Main content */}
       <main className="max-w-6xl mx-auto px-6 py-8">
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-3xl font-bold">My Audits</h1>
+            <h1 className="text-3xl font-bold">
+              {userIsInvitee ? 'Shared with me' : 'My Audits'}
+            </h1>
             <p className="text-muted-foreground mt-1">
-              View and manage your website audits
+              {userIsInvitee
+                ? 'Audits collaborators have shared with you'
+                : 'View and manage your website audits'}
             </p>
           </div>
-          <Link href="/">
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              New Audit
-            </Button>
-          </Link>
+          {!userIsInvitee && (
+            <Link href="/">
+              <Button>
+                <Plus className="h-4 w-4 mr-2" />
+                New Audit
+              </Button>
+            </Link>
+          )}
         </div>
 
         {audits.length === 0 ? (
@@ -206,16 +209,22 @@ export default function AuditsPage() {
             <CardContent className="py-12">
               <div className="text-center">
                 <div className="text-4xl mb-4">📊</div>
-                <h3 className="text-lg font-semibold mb-2">No audits yet</h3>
+                <h3 className="text-lg font-semibold mb-2">
+                  {userIsInvitee ? 'Nothing shared with you yet' : 'No audits yet'}
+                </h3>
                 <p className="text-muted-foreground mb-6">
-                  Start your first website audit to see it here
+                  {userIsInvitee
+                    ? "When someone shares an audit with you, it'll appear here."
+                    : 'Start your first website audit to see it here'}
                 </p>
-                <Link href="/">
-                  <Button>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Start New Audit
-                  </Button>
-                </Link>
+                {!userIsInvitee && (
+                  <Link href="/">
+                    <Button>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Start New Audit
+                    </Button>
+                  </Link>
+                )}
               </div>
             </CardContent>
           </Card>

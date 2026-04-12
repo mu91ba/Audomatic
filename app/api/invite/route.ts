@@ -96,10 +96,15 @@ export async function POST(request: NextRequest) {
 
     // Only send Supabase invite email for NEW users (not existing accounts)
     if (!invitee) {
-      const appUrl = request.headers.get('origin') || 'http://localhost:3000'
+      const appUrl =
+        process.env.NEXT_PUBLIC_APP_URL ||
+        (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null) ||
+        request.headers.get('origin') ||
+        'http://localhost:3000'
       try {
         await supabaseAdmin.auth.admin.inviteUserByEmail(email.toLowerCase(), {
           redirectTo: `${appUrl}/audit/${auditId}`,
+          data: { role: 'invitee' },
         })
       } catch (emailErr) {
         console.error('Error sending invite email:', emailErr)

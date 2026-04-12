@@ -26,7 +26,7 @@ import { StandaloneFrameNode } from './standalone-frame-node'
 import { DesignTokenPanel } from './design-token-panel'
 import { AnnotationToolbar, AnnotationTool } from './annotation-toolbar'
 import { calculateLayout } from '@/lib/layout'
-import { supabase, type Page as PageType, type Annotation } from '@/lib/supabase'
+import { supabase, type Page as PageType, type Annotation, type CanvasLayout } from '@/lib/supabase'
 import { Palette } from 'lucide-react'
 import { Button } from './ui/button'
 
@@ -45,19 +45,26 @@ interface AuditCanvasProps {
   pages: PageType[]
   auditStatus: string
   userRole?: 'owner' | 'commenter'
+  initialCanvasLayout?: CanvasLayout | null
 }
 
 // Wrapper component that provides ReactFlow context
-export function AuditCanvas({ auditId, pages, auditStatus, userRole = 'owner' }: AuditCanvasProps) {
+export function AuditCanvas({ auditId, pages, auditStatus, userRole = 'owner', initialCanvasLayout }: AuditCanvasProps) {
   return (
     <ReactFlowProvider>
-      <AuditCanvasInner auditId={auditId} pages={pages} auditStatus={auditStatus} userRole={userRole} />
+      <AuditCanvasInner
+        auditId={auditId}
+        pages={pages}
+        auditStatus={auditStatus}
+        userRole={userRole}
+        initialCanvasLayout={initialCanvasLayout}
+      />
     </ReactFlowProvider>
   )
 }
 
 // Inner component that can use useReactFlow hook
-function AuditCanvasInner({ auditId, pages, auditStatus, userRole }: AuditCanvasProps) {
+function AuditCanvasInner({ auditId, pages, auditStatus, userRole, initialCanvasLayout }: AuditCanvasProps) {
   // Get React Flow instance for coordinate conversion
   const { screenToFlowPosition } = useReactFlow()
   const [nodes, setNodes, onNodesChange] = useNodesState([])
@@ -74,6 +81,32 @@ function AuditCanvasInner({ auditId, pages, auditStatus, userRole }: AuditCanvas
   const deletedIdsRef = useRef<Set<string>>(new Set())
   // Track selected annotation IDs via onSelectionChange (avoids stale nodes closure)
   const selectedAnnotationIdsRef = useRef<Set<string>>(new Set())
+
+  // Persisted canvas layout (owner rearrangements) — keyed by node id
+  const [canvasLayout, setCanvasLayout] = useState<CanvasLayout>(initialCanvasLayout || {})
+  const hydratedLayoutRef = useRef(false)
+  const layoutDirtyRef = useRef(false)
+
+  // Hydrate once when the parent delivers the audit's stored layout
+  useEffect(() => {
+    if (hydratedLayoutRef.current) return
+    if (initialCanvasLayout === undefined) return
+    hydratedLayoutRef.current = true
+    if (initialCanvasLayout) setCanvasLayout(initialCanvasLayout)
+  }, [initialCanvasLayout])
+
+  // Persist layout to DB when the owner drags a node
+  useEffect(() => {
+    if (!layoutDirtyRef.current) return
+    layoutDirtyRef.current = false
+    supabase
+      .from('audits')
+      .update({ canvas_layout: canvasLayout })
+      .eq('id', auditId)
+      .then(({ error }) => {
+        if (error) console.error('Error saving canvas layout:', error)
+      })
+  }, [canvasLayout, auditId])
 
   // Load annotations from Supabase
   const loadAnnotations = useCallback(async () => {
@@ -199,18 +232,23 @@ function AuditCanvasInner({ auditId, pages, auditStatus, userRole }: AuditCanvas
     })
   }
 
-  // Update nodes when pages or annotations change
+  // Update nodes when pages, annotations, or stored layout change
   useEffect(() => {
     if (pages.length > 0) {
       const { nodes: layoutNodes, edges: layoutEdges } = calculateLayout(pages)
-      pageNodesRef.current = layoutNodes
+      const canDragPages = userRole === 'owner'
+      pageNodesRef.current = layoutNodes.map(n => ({
+        ...n,
+        draggable: canDragPages,
+        position: canvasLayout[n.id] ?? n.position,
+      }))
       setEdges(layoutEdges)
     }
-    
+
     // Combine page nodes with annotation nodes
     const annotationNodes = annotationsToNodes(annotations)
     setNodes([...pageNodesRef.current, ...annotationNodes])
-  }, [pages, annotations, setNodes, setEdges])
+  }, [pages, annotations, setNodes, setEdges, userRole, canvasLayout])
 
   // Handle annotation content change
   const handleAnnotationContentChange = useCallback(async (id: string, content: string) => {
@@ -307,43 +345,46 @@ function AuditCanvasInner({ auditId, pages, auditStatus, userRole }: AuditCanvas
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [handleDeleteSelected])
 
-  // Handle node position change (for annotation drag)
+  // Handle node position change (annotation drag -> annotations table,
+  // page/group/frame drag -> audits.canvas_layout for owners)
   const handleNodesChange = useCallback((changes: NodeChange[]) => {
     // Call the default handler
     onNodesChange(changes)
 
-    // Update annotation positions in database when dragging ends
+    // Collect page-layout changes from this batch and flush as one state update
+    const pageLayoutUpdates: Record<string, { x: number; y: number }> = {}
+
     changes.forEach(async (change) => {
-      // Check for position change with dragging = false (drag ended)
-      if (change.type === 'position' && change.dragging === false) {
-        const nodeId = change.id
-        if (nodeId.startsWith('annotation-')) {
-          const annotationId = nodeId.replace('annotation-', '')
-          
-          // Get the final position from the change or find the node
-          const position = change.position
-          if (position) {
-            try {
-              const { error } = await supabase
-                .from('annotations')
-                .update({ 
-                  position_x: position.x, 
-                  position_y: position.y,
-                  updated_at: new Date().toISOString()
-                })
-                .eq('id', annotationId)
-              
-              if (error) {
-                console.error('Error updating annotation position:', error)
-              }
-            } catch (err) {
-              console.error('Error updating annotation position:', err)
-            }
-          }
+      if (change.type !== 'position' || change.dragging !== false) return
+      const nodeId = change.id
+      const position = change.position
+      if (!position) return
+
+      if (nodeId.startsWith('annotation-')) {
+        const annotationId = nodeId.replace('annotation-', '')
+        try {
+          const { error } = await supabase
+            .from('annotations')
+            .update({
+              position_x: position.x,
+              position_y: position.y,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', annotationId)
+          if (error) console.error('Error updating annotation position:', error)
+        } catch (err) {
+          console.error('Error updating annotation position:', err)
         }
+      } else if (userRole === 'owner') {
+        pageLayoutUpdates[nodeId] = { x: position.x, y: position.y }
       }
     })
-  }, [onNodesChange])
+
+    if (Object.keys(pageLayoutUpdates).length > 0) {
+      layoutDirtyRef.current = true
+      setCanvasLayout(prev => ({ ...prev, ...pageLayoutUpdates }))
+    }
+  }, [onNodesChange, userRole])
 
   // Shared function to create an annotation at a given flow position
   const createAnnotationAt = useCallback(async (

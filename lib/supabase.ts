@@ -9,6 +9,8 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholde
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
 // Type definitions for our database schema
+export type CanvasLayout = Record<string, { x: number; y: number }>
+
 export type Audit = {
   id: string
   url: string
@@ -18,6 +20,7 @@ export type Audit = {
   total_pages?: number      // Total pages discovered to crawl
   processed_pages?: number  // Pages processed so far
   user_id?: string          // User who owns this audit (optional for pre-auth data)
+  canvas_layout?: CanvasLayout | null // Persisted per-node positions (owner rearrangements)
 }
 
 export type Page = {

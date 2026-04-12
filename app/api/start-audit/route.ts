@@ -37,6 +37,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 })
     }
 
+    // Invitees (users created via audit share invite) cannot create audits
+    if (user.user_metadata?.role === 'invitee') {
+      return NextResponse.json(
+        { error: 'Invited collaborators cannot create new audits' },
+        { status: 403 }
+      )
+    }
+
     // Rate limiting: max 5 audits per user per hour
     const windowStart = new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString()
     const { count } = await supabase
