@@ -99,15 +99,12 @@ function AuditCanvasInner({ auditId, pages, auditStatus, userRole, initialCanvas
   useEffect(() => {
     if (!layoutDirtyRef.current) return
     layoutDirtyRef.current = false
-    console.log('[LAYOUT] Saving canvas_layout to DB:', canvasLayout)
     supabase
       .from('audits')
       .update({ canvas_layout: canvasLayout })
       .eq('id', auditId)
-      .select()
-      .then(({ data, error }) => {
-        if (error) console.error('[LAYOUT] Save failed:', error)
-        else console.log('[LAYOUT] Save succeeded, rows:', data?.length, data)
+      .then(({ error }) => {
+        if (error) console.error('Error saving canvas layout:', error)
       })
   }, [canvasLayout, auditId])
 
@@ -354,14 +351,6 @@ function AuditCanvasInner({ auditId, pages, auditStatus, userRole, initialCanvas
     // Call the default handler
     onNodesChange(changes)
 
-    // Debug: log any drag-end position changes
-    const dragEnds = changes.filter(
-      c => c.type === 'position' && (c as any).dragging === false
-    )
-    if (dragEnds.length > 0) {
-      console.log('[LAYOUT] drag-end detected:', dragEnds, 'userRole:', userRole)
-    }
-
     // Collect page-layout changes from this batch and flush as one state update
     const pageLayoutUpdates: Record<string, { x: number; y: number }> = {}
 
@@ -394,7 +383,6 @@ function AuditCanvasInner({ auditId, pages, auditStatus, userRole, initialCanvas
     })
 
     if (Object.keys(pageLayoutUpdates).length > 0) {
-      console.log('[LAYOUT] page position updates:', pageLayoutUpdates)
       layoutDirtyRef.current = true
       setCanvasLayout(prev => ({ ...prev, ...pageLayoutUpdates }))
     }
