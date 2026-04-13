@@ -1,4 +1,4 @@
-# Audomatic Crawler Service
+# Sightmap Crawler Service
 
 This is a standalone Node.js service that handles website crawling with Puppeteer. It's designed to run on your Hostinger VPS alongside n8n.
 
@@ -89,7 +89,7 @@ Health check endpoint.
 ```json
 {
   "status": "ok",
-  "service": "audomatic-crawler",
+  "service": "sightmap-crawler",
   "version": "1.0.0"
 }
 ```
@@ -121,7 +121,7 @@ npm install -g pm2
 
 Start the service:
 ```bash
-pm2 start server.js --name audomatic-crawler
+pm2 start server.js --name sightmap-crawler
 pm2 save
 pm2 startup
 ```
@@ -129,7 +129,7 @@ pm2 startup
 Check status:
 ```bash
 pm2 status
-pm2 logs audomatic-crawler
+pm2 logs sightmap-crawler
 ```
 
 ### 4. Configure Nginx (Optional)

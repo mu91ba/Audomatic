@@ -1,7 +1,7 @@
 {
-  "name": "audomatic-crawler-service",
+  "name": "sightmap-crawler-service",
   "version": "1.0.0",
-  "description": "Standalone crawler service for Audomatic audit tool",
+  "description": "Standalone crawler service for Sightmap audit tool",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

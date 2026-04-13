@@ -1,4 +1,4 @@
-# Project Status - Audomatic
+# Project Status - Sightmap
 
 ## ✅ What's Been Built
 
@@ -74,7 +74,7 @@
 ## 📦 Project Structure
 
 ```
-Audomatic/
+Sightmap/
 ├── app/                          # Next.js App Router
 │   ├── api/start-audit/         # ✅ API for creating audits
 │   ├── audit/[id]/              # ✅ Canvas view page

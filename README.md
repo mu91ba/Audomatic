@@ -1,4 +1,4 @@
-# Audomatic - Automated Website Audit Tool
+# Sightmap — Visual Site Audit Tool
 
 A micro-SaaS application that automates website audits by crawling sites, extracting design tokens, capturing screenshots, and creating interactive visual sitemaps.
 
@@ -59,7 +59,7 @@ The crawler service runs on your Hostinger VPS:
 ssh user@your-vps-ip
 
 # Navigate to the project
-cd /path/to/audomatic/crawler-service
+cd /path/to/sightmap/crawler-service
 
 # Install dependencies
 npm install
@@ -76,7 +76,7 @@ nano .env
 
 # Start with PM2 (process manager)
 npm install -g pm2
-pm2 start server.js --name audomatic-crawler
+pm2 start server.js --name sightmap-crawler
 pm2 save
 pm2 startup
 ```
@@ -154,7 +154,7 @@ vercel
 ## Project Structure
 
 ```
-Audomatic/
+Sightmap/
 ├── app/                      # Next.js app directory
 │   ├── api/                  # API routes
 │   │   └── start-audit/      # Audit creation endpoint
@@ -220,10 +220,10 @@ It calculates:
 ```bash
 # Check crawler service status
 pm2 status
-pm2 logs audomatic-crawler
+pm2 logs sightmap-crawler
 
 # Restart crawler
-pm2 restart audomatic-crawler
+pm2 restart sightmap-crawler
 
 # Test crawler health
 curl http://localhost:3001/health

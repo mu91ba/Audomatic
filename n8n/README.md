@@ -110,7 +110,7 @@ Frontend redirects to /audit/[auditId]
 ### Audit stuck in "pending" status
 - Check n8n execution logs for errors
 - Verify the crawler service received the request
-- Check crawler logs: `pm2 logs audomatic-crawler`
+- Check crawler logs: `pm2 logs sightmap-crawler`
 
 ## Advanced: Email Notifications
 

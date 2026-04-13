@@ -20,7 +20,7 @@ export function AppHeader({ homeHref = '/', rightContent }: AppHeaderProps) {
       <div className="max-w-6xl mx-auto flex items-center justify-between">
         <Link href={homeHref} className="flex items-center gap-2">
           <Sparkles className="h-6 w-6 text-primary" />
-          <span className="text-xl font-bold">Audomatic</span>
+          <span className="text-xl font-bold">Sightmap</span>
         </Link>
         <div className="flex items-center gap-3">
           {rightContent}

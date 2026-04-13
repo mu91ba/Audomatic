@@ -1,5 +1,5 @@
 {
-  "name": "Audomatic Export to Google Sheets",
+  "name": "Sightmap Export to Google Sheets",
   "nodes": [
     {
       "parameters": {

@@ -439,7 +439,7 @@ function AuditCanvasInner({ auditId, pages, auditStatus, userRole, initialCanvas
   // Handle drag-from-toolbar drop onto canvas
   const handleDrop = useCallback(async (event: React.DragEvent) => {
     event.preventDefault()
-    const tool = event.dataTransfer.getData('application/audomatic-tool') as AnnotationTool
+    const tool = event.dataTransfer.getData('application/sightmap-tool') as AnnotationTool
     if (!tool) return
     const flowPosition = screenToFlowPosition({ x: event.clientX, y: event.clientY })
     await createAnnotationAt(tool, flowPosition)
@@ -452,7 +452,7 @@ function AuditCanvasInner({ auditId, pages, auditStatus, userRole, initialCanvas
 
   // Handle drag start from toolbar
   const handleToolbarDragStart = useCallback((tool: AnnotationTool, e: React.DragEvent) => {
-    e.dataTransfer.setData('application/audomatic-tool', tool)
+    e.dataTransfer.setData('application/sightmap-tool', tool)
     e.dataTransfer.effectAllowed = 'copy'
   }, [])
 

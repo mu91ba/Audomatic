@@ -1,8 +1,8 @@
-# Audomatic - Project Context & History
+# Sightmap — Project Context & History
 
-## What is Audomatic?
+## What is Sightmap?
 
-Audomatic is a micro-SaaS that automates the website audit process by:
+Sightmap is a micro-SaaS that automates the website audit process by:
 1. Crawling websites and capturing full-page screenshots
 2. Building interactive visual sitemaps (like FigJam/Miro)
 3. Extracting design tokens (colors, typography)

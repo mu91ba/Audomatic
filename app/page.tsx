@@ -76,7 +76,7 @@ export default function Home() {
             <div className="text-center space-y-4">
               <div className="flex items-center justify-center gap-2">
                 <Sparkles className="h-8 w-8 text-primary" />
-                <h1 className="text-4xl font-bold tracking-tight">Audomatic</h1>
+                <h1 className="text-4xl font-bold tracking-tight">Sightmap</h1>
               </div>
               <p className="text-lg text-muted-foreground">
                 Start a new website audit
@@ -168,7 +168,7 @@ export default function Home() {
           <div className="text-center space-y-4">
             <div className="flex items-center justify-center gap-2">
               <Sparkles className="h-8 w-8 text-primary" />
-              <h1 className="text-4xl font-bold tracking-tight">Audomatic</h1>
+              <h1 className="text-4xl font-bold tracking-tight">Sightmap</h1>
             </div>
             <p className="text-lg text-muted-foreground">
               Automated website audits with visual sitemaps

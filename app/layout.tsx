@@ -6,8 +6,8 @@ import { AuthProvider } from "@/components/auth/auth-provider";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Audomatic - Website Audit Tool",
-  description: "Automated website auditing with visual sitemaps and design token extraction",
+  title: "Sightmap — Visual Site Audit",
+  description: "Visual site mapping and design token audits for any website",
 };
 
 export default function RootLayout({

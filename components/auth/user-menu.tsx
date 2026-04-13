@@ -2,13 +2,15 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useAuth } from './auth-provider'
+import { AccountSettingsModal } from './account-settings-modal'
 import { Button } from '@/components/ui/button'
-import { User, LogOut, ChevronDown, FolderOpen } from 'lucide-react'
+import { User, LogOut, ChevronDown, FolderOpen, Settings } from 'lucide-react'
 import Link from 'next/link'
 
 export function UserMenu() {
   const { user, signOut } = useAuth()
   const [isOpen, setIsOpen] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
   // Close menu when clicking outside
@@ -30,10 +32,14 @@ export function UserMenu() {
     await signOut()
   }
 
-  // Get display name - use email before @ symbol
-  const displayName = user.email?.split('@')[0] || 'User'
+  // Get display name - stored name, falling back to email prefix
+  const displayName =
+    (user.user_metadata?.name as string | undefined) ||
+    user.email?.split('@')[0] ||
+    'User'
 
   return (
+    <>
     <div className="relative" ref={menuRef}>
       <Button
         variant="ghost"
@@ -66,6 +72,16 @@ export function UserMenu() {
               <FolderOpen className="h-4 w-4" />
               My Audits
             </Link>
+            <button
+              onClick={() => {
+                setIsOpen(false)
+                setShowSettings(true)
+              }}
+              className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-gray-50 w-full text-left transition-colors"
+            >
+              <Settings className="h-4 w-4" />
+              Account Settings
+            </button>
           </div>
 
           {/* Sign out */}
@@ -81,6 +97,10 @@ export function UserMenu() {
         </div>
       )}
     </div>
+    {showSettings && (
+      <AccountSettingsModal onClose={() => setShowSettings(false)} />
+    )}
+    </>
   )
 }
 

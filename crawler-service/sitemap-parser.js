@@ -170,7 +170,7 @@ function fetchUrl(url) {
     
     const options = {
       headers: {
-        'User-Agent': 'Audomatic-Crawler/1.0'
+        'User-Agent': 'Sightmap-Crawler/1.0'
       }
     };
 

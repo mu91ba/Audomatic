@@ -1,5 +1,5 @@
 /**
- * Audomatic Crawler Service
+ * Sightmap Crawler Service
  * Standalone Express server that handles website crawling with Puppeteer
  * Triggered by n8n workflows and saves results to Supabase
  */
@@ -37,7 +37,7 @@ const authenticateRequest = (req, res, next) => {
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
-    service: 'audomatic-crawler',
+    service: 'sightmap-crawler',
     version: '1.0.0'
   });
 });
@@ -83,7 +83,7 @@ app.post('/crawl', authenticateRequest, async (req, res) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`🚀 Audomatic Crawler Service running on port ${PORT}`);
+  console.log(`🚀 Sightmap Crawler Service running on port ${PORT}`);
   console.log(`📍 POST /crawl - Start website crawl`);
   console.log(`📍 GET /health - Health check`);
 });
