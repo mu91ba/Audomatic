@@ -66,7 +66,7 @@ export function AuditCanvas({ auditId, pages, auditStatus, userRole = 'owner', i
 // Inner component that can use useReactFlow hook
 function AuditCanvasInner({ auditId, pages, auditStatus, userRole, initialCanvasLayout }: AuditCanvasProps) {
   // Get React Flow instance for coordinate conversion
-  const { screenToFlowPosition } = useReactFlow()
+  const { screenToFlowPosition, getNode } = useReactFlow()
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
   const [showDesignPanel, setShowDesignPanel] = useState(false)
@@ -368,7 +368,9 @@ function AuditCanvasInner({ auditId, pages, auditStatus, userRole, initialCanvas
     changes.forEach(async (change) => {
       if (change.type !== 'position' || change.dragging !== false) return
       const nodeId = change.id
-      const position = change.position
+      // React Flow sometimes omits position on the drag-end change,
+      // so read the current position straight from the node.
+      const position = change.position ?? getNode(nodeId)?.position
       if (!position) return
 
       if (nodeId.startsWith('annotation-')) {
@@ -396,7 +398,7 @@ function AuditCanvasInner({ auditId, pages, auditStatus, userRole, initialCanvas
       layoutDirtyRef.current = true
       setCanvasLayout(prev => ({ ...prev, ...pageLayoutUpdates }))
     }
-  }, [onNodesChange, userRole])
+  }, [onNodesChange, userRole, getNode])
 
   // Shared function to create an annotation at a given flow position
   const createAnnotationAt = useCallback(async (
