@@ -61,7 +61,7 @@ export default function AuditsPage() {
       // Mark ownership
       const allAudits: AuditWithOwnership[] = (ownAudits || []).map(a => ({
         ...a,
-        isOwner: a.user_id === user?.id || a.user_id === null,
+        isOwner: a.user_id === user?.id,
       }))
 
       setAudits(allAudits)

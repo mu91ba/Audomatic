@@ -27,7 +27,7 @@ export default function AuditPage() {
   const wasCompleteRef = useRef(false)
   const { user } = useAuth()
 
-  const isOwner = audit?.user_id === user?.id || audit?.user_id === null
+  const isOwner = audit?.user_id === user?.id
 
   // Helper to determine if audit is effectively complete
   const isEffectivelyComplete =
