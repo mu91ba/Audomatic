@@ -11,7 +11,7 @@
 
 const puppeteer = require('puppeteer');
 const { createClient } = require('@supabase/supabase-js');
-const { fetchSitemap, parseSitemapUrls } = require('./sitemap-parser');
+const { fetchSitemap, parseSitemapUrls, isCrawlablePageUrl } = require('./sitemap-parser');
 const { 
   ensurePageFullyLoaded, 
   handlePopups, 
@@ -26,9 +26,13 @@ const supabase = createClient(
 
 // Configuration
 const MAX_DEPTH = 4;        // Maximum depth to crawl (0 = homepage, 4 = deep pages)
-const MAX_PAGES = 500;      // Maximum pages to crawl per audit
+const MAX_PAGES = parseInt(process.env.MAX_PAGES, 10) || 500; // Maximum pages to crawl per audit
 const DELAY_BETWEEN_PAGES = 2000; // 2 seconds between pages
 const MIN_TEMPLATE_GROUP_SIZE = 4; // Min pages sharing a URL pattern to trigger grouping
+
+// Realistic browser fingerprint — some sites (e.g. Shopify stores with
+// IP-blocker apps) serve stripped or blocked pages to headless browsers
+const BROWSER_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
 /**
  * Detect URL pattern for template grouping.
@@ -417,8 +421,8 @@ async function extractInternalLinks(page, baseOrigin) {
         const url = new URL(link);
         // Must be same origin
         if (url.origin !== baseOrigin) return false;
-        // Skip file downloads
-        if (/\.(pdf|zip|doc|docx|xls|xlsx|ppt|pptx|jpg|jpeg|png|gif|svg|mp4|mp3)$/i.test(url.pathname)) return false;
+        // Skip file downloads and non-HTML resources (.pdf, .md, images, etc.)
+        if (!isCrawlablePageUrl(link)) return false;
         // Skip mailto: and tel: links
         if (link.startsWith('mailto:') || link.startsWith('tel:')) return false;
         return true;
@@ -446,7 +450,16 @@ async function processPage(browser, auditId, url, baseUrl, baseOrigin, designTok
   try {
     page = await browser.newPage();
     await page.setViewport({ width: 1440, height: 900 });
-    
+
+    // Present as a normal desktop Chrome, not a headless bot
+    await page.setUserAgent(BROWSER_USER_AGENT);
+    await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      window.chrome = window.chrome || { runtime: {} };
+      Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+    });
+
     // Block unnecessary resources for faster loading (allow fonts so text renders correctly)
     await page.setRequestInterception(true);
     page.on('request', (req) => {
@@ -458,10 +471,22 @@ async function processPage(browser, auditId, url, baseUrl, baseOrigin, designTok
     });
 
     // Navigate to page
-    await page.goto(url, { 
+    const response = await page.goto(url, {
       waitUntil: 'networkidle2',
-      timeout: 60000 
+      timeout: 60000
     });
+
+    // Skip pages that aren't real HTML (markdown/text/json files, block pages)
+    const status = response ? response.status() : 0;
+    const contentType = response ? (response.headers()['content-type'] || '') : '';
+    if (status >= 400) {
+      console.log(`   ⚠️ Skipping: HTTP ${status} for ${url}`);
+      return [];
+    }
+    if (contentType && !contentType.includes('text/html')) {
+      console.log(`   ⚠️ Skipping non-HTML content (${contentType}) for ${url}`);
+      return [];
+    }
 
     // Prevent popups and modals
     await page.evaluate(() => {
@@ -476,8 +501,26 @@ async function processPage(browser, auditId, url, baseUrl, baseOrigin, designTok
     // Ensure page fully loaded
     await ensurePageFullyLoaded(page);
     
-    // Get page title
-    const title = await page.title();
+    // Get page title, with fallbacks for pages that don't set <title>
+    // (some Shopify themes only inject it client-side, or not at all)
+    let title = (await page.title() || '').trim();
+    if (!title) {
+      title = await page.evaluate(() => {
+        const og = document.querySelector('meta[property="og:title"]');
+        if (og && og.content && og.content.trim()) return og.content.trim();
+        const h1 = document.querySelector('h1');
+        if (h1 && h1.textContent && h1.textContent.trim()) return h1.textContent.trim();
+        return '';
+      });
+    }
+    if (!title) {
+      // Derive a readable title from the URL slug: /pages/about-us → "About Us"
+      const pathname = new URL(url).pathname;
+      const slug = pathname.split('/').filter(Boolean).pop();
+      title = slug
+        ? decodeURIComponent(slug).replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+        : 'Home';
+    }
 
     // Extract internal links for further crawling
     console.log('   🔗 Extracting links...');
