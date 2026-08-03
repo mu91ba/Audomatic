@@ -267,9 +267,8 @@ async function crawlWebsite(auditId, websiteUrl) {
     try {
       const { data, error: updateError } = await supabase
         .from('audits')
-        .update({ 
+        .update({
           status: 'completed',
-          completed_at: new Date().toISOString(),
           processed_pages: processedCount,
           total_pages: processedCount
         })
@@ -294,9 +293,8 @@ async function crawlWebsite(auditId, websiteUrl) {
       
       const { error: retryError } = await supabase
         .from('audits')
-        .update({ 
+        .update({
           status: 'completed',
-          completed_at: new Date().toISOString(),
           processed_pages: processedCount,
           total_pages: processedCount
         })
@@ -318,10 +316,7 @@ async function crawlWebsite(auditId, websiteUrl) {
     try {
       const { error: updateError } = await supabase
         .from('audits')
-        .update({ 
-          status: 'failed',
-          error_message: error.message || 'Unknown error'
-        })
+        .update({ status: 'failed' })
         .eq('id', auditId);
       
       if (updateError) {
