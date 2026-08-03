@@ -6,10 +6,13 @@
 const https = require('https');
 const http = require('http');
 
-// Maximum number of child sitemaps to fetch (prevents infinite loops)
-const MAX_CHILD_SITEMAPS = 10;
-// Maximum URLs to return (prevents memory issues)
-const MAX_URLS = 500;
+// Maximum number of child sitemaps to fetch (prevents infinite loops;
+// large Shopify stores split products across many child sitemaps)
+const MAX_CHILD_SITEMAPS = 50;
+// Optional cap on URLs returned — uncapped by default so template group
+// counts reflect the true sitemap totals. The real crawl-volume guard is
+// MAX_PAGES in crawler.js; this env override exists for testing.
+const MAX_URLS = parseInt(process.env.MAX_SITEMAP_URLS, 10) || Infinity;
 
 /**
  * Fetch sitemap.xml from a website
@@ -136,8 +139,10 @@ async function processSitemapContent(content) {
       if (!added) break;
     }
 
-    if (totalAvailable > MAX_URLS) {
+    if (combinedUrls.length < totalAvailable) {
       console.log(`   Sampled ${combinedUrls.length} of ${totalAvailable} URLs (round-robin across ${urlLists.length} sitemaps)`);
+    } else {
+      console.log(`   Collected all ${combinedUrls.length} URLs from ${urlLists.length} child sitemaps`);
     }
 
     // Create a synthetic urlset with all found URLs

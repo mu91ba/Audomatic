@@ -360,11 +360,10 @@ function normalizeUrl(url) {
     const urlObj = new URL(url);
     // Remove hash
     urlObj.hash = '';
-    // Remove common tracking params
-    urlObj.searchParams.delete('utm_source');
-    urlObj.searchParams.delete('utm_medium');
-    urlObj.searchParams.delete('utm_campaign');
-    urlObj.searchParams.delete('ref');
+    // Remove common tracking/locale params so URL variants don't crawl twice
+    ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'ref', 'country', 'locale', 'currency'].forEach(p =>
+      urlObj.searchParams.delete(p)
+    );
     // Get clean URL and remove trailing slash
     let clean = urlObj.href;
     if (clean.endsWith('/') && urlObj.pathname !== '/') {
@@ -465,11 +464,19 @@ async function processPage(browser, auditId, url, baseUrl, baseOrigin, designTok
       }
     });
 
-    // Navigate to page
-    const response = await page.goto(url, {
-      waitUntil: 'networkidle2',
-      timeout: 60000
-    });
+    // Navigate to page, retrying on 429 (rate limiting) with backoff
+    let response = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      response = await page.goto(url, {
+        waitUntil: 'networkidle2',
+        timeout: 60000
+      });
+      if (!response || response.status() !== 429) break;
+      const retryAfter = parseInt(response.headers()['retry-after'], 10);
+      const waitMs = (Number.isFinite(retryAfter) ? Math.min(retryAfter, 60) : attempt * 20) * 1000;
+      console.log(`   ⏳ HTTP 429 (rate limited), waiting ${waitMs / 1000}s before retry ${attempt}/3...`);
+      await new Promise(resolve => setTimeout(resolve, waitMs));
+    }
 
     // Skip pages that aren't real HTML (markdown/text/json files, block pages)
     const status = response ? response.status() : 0;
