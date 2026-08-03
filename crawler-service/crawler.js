@@ -27,7 +27,7 @@ const supabase = createClient(
 // Configuration
 const MAX_DEPTH = 4;        // Maximum depth to crawl (0 = homepage, 4 = deep pages)
 const MAX_PAGES = parseInt(process.env.MAX_PAGES, 10) || 500; // Maximum pages to crawl per audit
-const DELAY_BETWEEN_PAGES = 2000; // 2 seconds between pages
+const DELAY_BETWEEN_PAGES = parseInt(process.env.CRAWL_DELAY_MS, 10) || 10000; // pause between pages; each page load fires ~100 subrequests, so pace generously to stay under per-IP rate limits
 const MIN_TEMPLATE_GROUP_SIZE = 4; // Min pages sharing a URL pattern to trigger grouping
 
 // Realistic browser fingerprint — some sites (e.g. Shopify stores with
@@ -472,8 +472,10 @@ async function processPage(browser, auditId, url, baseUrl, baseOrigin, designTok
         timeout: 60000
       });
       if (!response || response.status() !== 429) break;
+      // Rate-limit windows outlast the Retry-After hint under burst load;
+      // escalate waits so the window actually resets before retrying
       const retryAfter = parseInt(response.headers()['retry-after'], 10);
-      const waitMs = (Number.isFinite(retryAfter) ? Math.min(retryAfter, 60) : attempt * 20) * 1000;
+      const waitMs = Math.max(Number.isFinite(retryAfter) ? retryAfter * 1000 : 0, attempt * 60000);
       console.log(`   ⏳ HTTP 429 (rate limited), waiting ${waitMs / 1000}s before retry ${attempt}/3...`);
       await new Promise(resolve => setTimeout(resolve, waitMs));
     }
