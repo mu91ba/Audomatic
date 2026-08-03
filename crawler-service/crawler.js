@@ -30,6 +30,18 @@ const MAX_PAGES = parseInt(process.env.MAX_PAGES, 10) || 500; // Maximum pages t
 const DELAY_BETWEEN_PAGES = parseInt(process.env.CRAWL_DELAY_MS, 10) || 10000; // pause between pages; each page load fires ~100 subrequests, so pace generously to stay under per-IP rate limits
 const MIN_TEMPLATE_GROUP_SIZE = 4; // Min pages sharing a URL pattern to trigger grouping
 
+// Sections that hold unique static content rather than templated entries.
+// These only group when clearly machine-generated at scale, and their
+// well-known main pages are never grouped at all.
+const STATIC_PAGE_SECTIONS = ['pages'];
+const STATIC_GROUP_THRESHOLD = 15;
+const IMPORTANT_PAGE_SLUGS = [
+  'about', 'about-us', 'contact', 'contact-us', 'faq', 'faqs',
+  'shipping', 'shipping-information', 'shipping-policy',
+  'returns', 'returns-refunds', 'refund-policy',
+  'privacy-policy', 'terms', 'terms-of-service', 'terms-and-conditions'
+];
+
 // Realistic browser fingerprint — some sites (e.g. Shopify stores with
 // IP-blocker apps) serve stripped or blocked pages to headless browsers
 const BROWSER_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
@@ -75,12 +87,25 @@ function groupSitemapUrls(urls) {
   const templateCounts = new Map(); // normalized representative url → total count
   const templateUrls = new Map();   // normalized representative url → all URLs in group
 
-  for (const [, patternEntries] of patternGroups.entries()) {
-    if (patternEntries.length >= MIN_TEMPLATE_GROUP_SIZE) {
-      const rep = patternEntries[0];
-      templateCounts.set(rep.normalized, patternEntries.length);
-      templateUrls.set(rep.normalized, patternEntries.map(e => e.normalized));
-      patternEntries.slice(1).forEach(e => skippedRaw.add(e.raw));
+  for (const [pattern, patternEntries] of patternGroups.entries()) {
+    const section = pattern.split('/')[1];
+    const isStaticSection = STATIC_PAGE_SECTIONS.includes(section);
+    const threshold = isStaticSection ? STATIC_GROUP_THRESHOLD : MIN_TEMPLATE_GROUP_SIZE;
+
+    // Important static pages (about, contact, ...) always stay individual
+    let groupable = patternEntries;
+    if (isStaticSection) {
+      groupable = patternEntries.filter(e => {
+        const slug = (e.normalized.split('/').filter(Boolean).pop() || '').toLowerCase();
+        return !IMPORTANT_PAGE_SLUGS.includes(slug);
+      });
+    }
+
+    if (groupable.length >= threshold) {
+      const rep = groupable[0];
+      templateCounts.set(rep.normalized, groupable.length);
+      templateUrls.set(rep.normalized, groupable.map(e => e.normalized));
+      groupable.slice(1).forEach(e => skippedRaw.add(e.raw));
     }
   }
 
@@ -607,16 +632,19 @@ async function processPage(browser, auditId, url, baseUrl, baseOrigin, designTok
 }
 
 /**
- * Generate safe filename from URL
+ * Generate safe filename from URL.
+ * Strips non-ASCII (storage rejects unicode keys) and appends a short
+ * hash so distinct URLs that sanitize identically can't collide.
  */
 function generateFilename(url) {
-  return url
-    .replace('https://', '')
-    .replace('http://', '')
-    .replace(/\//g, '_')
-    .replace(/[?:=&]/g, '_')
+  const crypto = require('crypto');
+  const base = url
+    .replace(/^https?:\/\//, '')
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
     .replace(/_{2,}/g, '_')
-    + '.png';
+    .slice(0, 180);
+  const hash = crypto.createHash('md5').update(url).digest('hex').slice(0, 8);
+  return `${base}_${hash}.png`;
 }
 
 /**
