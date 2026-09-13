@@ -6,49 +6,37 @@
  * `${auditId}/`; this module removes them when an audit is deleted, which the
  * old code never did (audit rows were deleted but files were orphaned forever).
  *
- * Required env (Vercel project settings — NOT prefixed NEXT_PUBLIC_, these
- * must never reach the browser):
- *   R2_ACCOUNT_ID
- *   R2_ACCESS_KEY_ID
- *   R2_SECRET_ACCESS_KEY
- *   R2_BUCKET
+ * Uses the native R2 binding rather than the S3 API: the app runs on Cloudflare
+ * Workers, where @aws-sdk/client-s3 fails at request time, and the binding also
+ * means no R2 credentials need to exist in the Worker at all. The binding is
+ * declared as `SCREENSHOTS` in wrangler.jsonc. The crawler still uses S3, since
+ * it runs on a plain VPS.
  */
 
-import {
-  S3Client,
-  ListObjectsV2Command,
-  DeleteObjectsCommand,
-} from '@aws-sdk/client-s3'
+import { getCloudflareContext } from '@opennextjs/cloudflare'
 
-const REQUIRED_ENV = [
-  'R2_ACCOUNT_ID',
-  'R2_ACCESS_KEY_ID',
-  'R2_SECRET_ACCESS_KEY',
-  'R2_BUCKET',
-] as const
-
-let client: S3Client | null = null
-
-export function isR2Configured(): boolean {
-  return REQUIRED_ENV.every(k => !!process.env[k])
+/** Minimal structural type for the R2 binding, to avoid a types dependency. */
+type R2Listed = {
+  objects: { key: string }[]
+  truncated: boolean
+  cursor?: string
+}
+type R2BucketLike = {
+  list(opts: { prefix?: string; cursor?: string; limit?: number }): Promise<R2Listed>
+  delete(keys: string | string[]): Promise<void>
 }
 
-function getClient(): S3Client {
-  if (!client) {
-    const missing = REQUIRED_ENV.filter(k => !process.env[k])
-    if (missing.length) {
-      throw new Error(`R2 is not configured — missing env: ${missing.join(', ')}`)
-    }
-    client = new S3Client({
-      region: 'auto',
-      endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-      credentials: {
-        accessKeyId: process.env.R2_ACCESS_KEY_ID!,
-        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
-      },
-    })
+function getBucket(): R2BucketLike | null {
+  try {
+    const env = getCloudflareContext().env as unknown as Record<string, unknown>
+    return (env.SCREENSHOTS as R2BucketLike) ?? null
+  } catch {
+    return null
   }
-  return client
+}
+
+export function isR2Configured(): boolean {
+  return getBucket() !== null
 }
 
 /**
@@ -63,7 +51,7 @@ export function isValidAuditId(auditId: unknown): auditId is string {
   return typeof auditId === 'string' && UUID_RE.test(auditId)
 }
 
-/** S3 DeleteObjects accepts at most 1000 keys per request. */
+/** R2 delete accepts at most 1000 keys per call. */
 const DELETE_BATCH = 1000
 
 /**
@@ -75,45 +63,27 @@ export async function deleteAuditScreenshots(auditId: string): Promise<number> {
     throw new Error('Refusing to delete: auditId is not a valid uuid')
   }
 
-  const s3 = getClient()
-  const Bucket = process.env.R2_BUCKET!
-  const Prefix = `${auditId}/`
+  const bucket = getBucket()
+  if (!bucket) throw new Error('R2 binding SCREENSHOTS is not available')
 
+  const prefix = `${auditId}/`
   let deleted = 0
-  let ContinuationToken: string | undefined
+  let cursor: string | undefined
 
   do {
-    const listed = await s3.send(
-      new ListObjectsV2Command({ Bucket, Prefix, ContinuationToken })
-    )
-
-    const keys = (listed.Contents ?? [])
-      .map(o => o.Key)
-      .filter((k): k is string => typeof k === 'string' && k.startsWith(Prefix))
+    const listed = await bucket.list({ prefix, cursor })
+    const keys = listed.objects
+      .map(o => o.key)
+      .filter(k => typeof k === 'string' && k.startsWith(prefix))
 
     for (let i = 0; i < keys.length; i += DELETE_BATCH) {
       const batch = keys.slice(i, i + DELETE_BATCH)
-      const res = await s3.send(
-        new DeleteObjectsCommand({
-          Bucket,
-          Delete: { Objects: batch.map(Key => ({ Key })), Quiet: true },
-        })
-      )
-      if (res.Errors?.length) {
-        throw new Error(
-          `R2 delete failed for ${res.Errors.length} object(s): ` +
-            res.Errors.slice(0, 3)
-              .map(e => `${e.Key} (${e.Code})`)
-              .join(', ')
-        )
-      }
+      await bucket.delete(batch)
       deleted += batch.length
     }
 
-    ContinuationToken = listed.IsTruncated
-      ? listed.NextContinuationToken
-      : undefined
-  } while (ContinuationToken)
+    cursor = listed.truncated ? listed.cursor : undefined
+  } while (cursor)
 
   return deleted
 }
