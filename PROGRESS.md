@@ -76,9 +76,10 @@ not just a secret update.
 - [ ] **Vercel project not deleted.** It still builds from git `main` and still
       has env vars pointing at the live Supabase project.
 - [ ] n8n `export-workflow.json` has the **old** Supabase URL + apikey hardcoded
-      in its "Fetch Pages" node. The Worker's `N8N_EXPORT_WEBHOOK_URL` also
-      points at `/webhook/audit-webhook` (the dead legacy workflow) rather than
-      `/webhook/export-audit`. Sheets export is broken until both are fixed.
+      in its "Fetch Pages" node, so the Sheets export is broken until it is
+      updated in the n8n UI. (The Worker's `N8N_EXPORT_WEBHOOK_URL` is correct,
+      `/webhook/export-audit`; it was Vercel that pointed at the dead
+      `/webhook/audit-webhook`, and Vercel is going away.)
 - [ ] `n8n/audomatic-workflow.json` is dead — safe to delete from n8n.
 - [ ] Old Supabase project `cmdybpjqhndjlfieilfg` still exists holding 0.961 GB.
 - [ ] `www.qanvos.com` does not resolve; only the apex is attached.
