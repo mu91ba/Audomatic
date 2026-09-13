@@ -8,6 +8,85 @@
 
 ---
 
+## Session 2026-09-13 (latest) — Vercel retired; app runs on Cloudflare Workers
+
+Follows the entry below. **App now lives at https://qanvos.com**, served by a
+Cloudflare Worker. Vercel is no longer used. Five commits, none pushed.
+
+### Why the move happened now
+The R2 delete fix could not reach production on Vercel: Vercel builds from git
+and the fix was uncommitted, so every deleted audit kept orphaning its
+screenshot. Wrangler deploys from local files, so migrating shipped the fix.
+
+### The stack
+| Piece | Where |
+|---|---|
+| App | Cloudflare Worker `sightmap` → **qanvos.com** |
+| Screenshots | R2 bucket `sightmap-screenshots` → **img.qanvos.com** |
+| Crawler | VPS, behind a Cloudflare Tunnel → **crawler.qanvos.com** |
+| DB + auth | Supabase `plyruluupcoikrobyzsy` (org `qanvos`) |
+| Sheets export | n8n on the VPS (unchanged, still broken — see below) |
+
+### Version pinning that matters
+`@opennextjs/cloudflare` is pinned to **1.15.1** — the last line supporting
+Next 14; 1.16.0 requires Next 15. That pins `next` to **14.2.35** (a patch bump
+from 14.2.18). Upgrading the adapter therefore forces a Next 15 + React 19
+upgrade, which would also drag `reactflow@11` → `@xyflow/react@12` and touch
+the canvas. Don't bump it casually.
+
+Build needs **Node 20** (`/opt/homebrew/opt/node@20/bin/node`); wrangler needs
+**Node ≥22**. Local default is 26, so: build with 20, deploy with the default.
+
+### Two Workers constraints that bit
+1. **Workers will not fetch a raw IP over plain HTTP** — `http://77.37.67.72:3001`
+   returned **403 from Cloudflare's edge** before leaving. Not a port issue:
+   8080 failed the same way, while an HTTPS *hostname* returned a genuine origin
+   response. Vercel had no such restriction, which is why this only appeared
+   after the move. Fixed with a Cloudflare Tunnel.
+2. **`@aws-sdk/client-s3` throws at request time on Workers.** Deleting an audit
+   returned `"screenshots could not be removed"` and orphaned the object — the
+   exact leak the route exists to prevent. Replaced with the native R2 binding
+   (`env.SCREENSHOTS`), which also removed all four R2 secrets from the Worker
+   and cut the bundle from 1294 → 1069 KiB gzipped (limit is 3 MB).
+
+### Cloudflare Tunnel
+`cloudflared` (systemd, enabled) on the VPS, tunnel `sightmap-crawler`
+(`80c41747-0131-4ebc-bbf8-c25b772b687d`), config at `/etc/cloudflared/config.yml`,
+routing crawler.qanvos.com → `http://localhost:3001`. The crawler now binds to
+**127.0.0.1** only — it was previously exposed on the public IP with just the
+`x-api-secret` header in front of it.
+
+### Verified on qanvos.com
+Unauthenticated delete → 401. Empty `auditId` → 400. Real crawl → `completed`,
+WebP served from img.qanvos.com, delete → `screenshotsDeleted: 1`, confirmed
+against the bucket rather than the API response (the CDN keeps serving the image
+for a while afterwards — `Cache-Control` is a year, so don't test purging by
+fetching the URL).
+
+### Worker secrets
+Only five remain: `SUPABASE_SERVICE_ROLE_KEY`, `CRAWLER_URL`,
+`CRAWLER_API_SECRET`, `N8N_EXPORT_WEBHOOK_URL`, `N8N_EXPORT_WEBHOOK_SECRET`.
+`NEXT_PUBLIC_*` are compiled in at build time, so changing them needs a rebuild,
+not just a secret update.
+
+### Still open
+- [ ] Supabase **Site URL** still `http://localhost:3000` → set to
+      `https://qanvos.com`, and add `https://qanvos.com/**` to redirect URLs.
+      Confirmation, invite and password-reset links are broken until then.
+- [ ] **Vercel project not deleted.** It still builds from git `main` and still
+      has env vars pointing at the live Supabase project.
+- [ ] n8n `export-workflow.json` has the **old** Supabase URL + apikey hardcoded
+      in its "Fetch Pages" node. The Worker's `N8N_EXPORT_WEBHOOK_URL` also
+      points at `/webhook/audit-webhook` (the dead legacy workflow) rather than
+      `/webhook/export-audit`. Sheets export is broken until both are fixed.
+- [ ] `n8n/audomatic-workflow.json` is dead — safe to delete from n8n.
+- [ ] Old Supabase project `cmdybpjqhndjlfieilfg` still exists holding 0.961 GB.
+- [ ] `www.qanvos.com` does not resolve; only the apex is attached.
+- [ ] Nothing pushed. `debug/shopify-crawl-fix` is 6 commits ahead of `main` and
+      still deliberately unmerged.
+
+---
+
 ## Session 2026-09-13 (later) — R2 rollout executed; migrated to a NEW Supabase project
 
 Continues the entry below, which described the plan. This is what actually
