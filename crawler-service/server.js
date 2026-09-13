@@ -85,8 +85,13 @@ app.post('/crawl', authenticateRequest, async (req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
-  console.log(`🚀 Sightmap Crawler Service running on port ${PORT}`);
+// Bind to loopback only: the service is reached through the Cloudflare Tunnel,
+// which connects locally. Listening on all interfaces left the API exposed on
+// the VPS's public IP with only the x-api-secret header in front of it.
+const HOST = process.env.HOST || '127.0.0.1';
+
+app.listen(PORT, HOST, () => {
+  console.log(`🚀 Sightmap Crawler Service running on ${HOST}:${PORT}`);
   console.log(`📍 POST /crawl - Start website crawl`);
   console.log(`📍 GET /health - Health check`);
 });
