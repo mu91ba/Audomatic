@@ -6,6 +6,12 @@
   // for it to take effect.
   "compatibility_date": "2025-04-01",
   "compatibility_flags": ["nodejs_compat"],
+  "routes": [
+    {
+      "pattern": "qanvos.com",
+      "custom_domain": true
+    }
+  ],
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
