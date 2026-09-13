@@ -1,3 +1,7 @@
+// Must run before ./crawler is required: crawler.js and sitemap-parser.js read
+// MAX_PAGES, CRAWL_DELAY_MS, SCREENSHOT_SCALE and MAX_SITEMAP_URLS at module load.
+require('dotenv').config();
+
 /**
  * Sightmap Crawler Service
  * Standalone Express server that handles website crawling with Puppeteer
@@ -7,7 +11,6 @@
 const express = require('express');
 const cors = require('cors');
 const { crawlWebsite } = require('./crawler');
-require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;

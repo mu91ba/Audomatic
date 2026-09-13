@@ -12,13 +12,20 @@
 const puppeteer = require('puppeteer');
 const { createClient } = require('@supabase/supabase-js');
 const { fetchSitemap, parseSitemapUrls, isCrawlablePageUrl } = require('./sitemap-parser');
-const { 
-  ensurePageFullyLoaded, 
-  handlePopups, 
-  extractDesignTokens 
+const {
+  ensurePageFullyLoaded,
+  handlePopups,
+  extractDesignTokens
 } = require('./page-utils');
+const {
+  assertStorageConfig,
+  pickScreenshotFormat,
+  uploadScreenshot
+} = require('./storage');
 
 // Initialize Supabase client with service role key (has full access)
+// Supabase now holds only the database + auth. Screenshots live in R2 —
+// see storage.js.
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY
@@ -29,6 +36,13 @@ const MAX_DEPTH = 4;        // Maximum depth to crawl (0 = homepage, 4 = deep pa
 const MAX_PAGES = parseInt(process.env.MAX_PAGES, 10) || 500; // Maximum pages to crawl per audit
 const DELAY_BETWEEN_PAGES = parseInt(process.env.CRAWL_DELAY_MS, 10) || 10000; // pause between pages; each page load fires ~100 subrequests, so pace generously to stay under per-IP rate limits
 const MIN_TEMPLATE_GROUP_SIZE = 4; // Min pages sharing a URL pattern to trigger grouping
+
+// Raster scale for screenshots. Layout is always computed at 1440 CSS px;
+// this only changes how many actual pixels get captured. The canvas card
+// renders at 280px and the detail modal caps at 1024px (max-w-5xl), so
+// 0.75 -> 1080px still exceeds every size the UI ever displays while
+// capturing ~2x fewer pixels than a 1:1 capture.
+const SCREENSHOT_SCALE = parseFloat(process.env.SCREENSHOT_SCALE) || 0.75;
 
 // Sections that hold unique static content rather than templated entries.
 // These only group when clearly machine-generated at scale, and their
@@ -123,7 +137,11 @@ async function crawlWebsite(auditId, websiteUrl) {
   
   try {
     console.log(`🚀 Starting crawl for ${websiteUrl}`);
-    
+
+    // Fail fast on an incomplete .env rather than dying mid-crawl on the
+    // first screenshot upload.
+    assertStorageConfig();
+
     // Normalize base URL (remove trailing slash for consistency)
     const baseUrl = websiteUrl.replace(/\/$/, '');
     const baseOrigin = new URL(baseUrl).origin;
@@ -468,7 +486,11 @@ async function processPage(browser, auditId, url, baseUrl, baseOrigin, designTok
   
   try {
     page = await browser.newPage();
-    await page.setViewport({ width: 1440, height: 900 });
+    await page.setViewport({
+      width: 1440,
+      height: 900,
+      deviceScaleFactor: SCREENSHOT_SCALE
+    });
 
     // Present as a normal desktop Chrome, not a headless bot
     await page.setUserAgent(BROWSER_USER_AGENT);
@@ -573,30 +595,49 @@ async function processPage(browser, auditId, url, baseUrl, baseOrigin, designTok
 
     await page.waitForTimeout(500);
 
+    // WebP cannot encode a side longer than 16383px and full-page captures of
+    // long pages routinely exceed that, so measure the settled layout and let
+    // storage.js pick a format that can actually hold it.
+    const pageSize = await page.evaluate(() => ({
+      height: Math.max(
+        document.documentElement.scrollHeight,
+        document.body.scrollHeight
+      ),
+      width: Math.max(
+        document.documentElement.scrollWidth,
+        document.body.scrollWidth
+      )
+    }));
+    // The format limit applies to captured pixels, not CSS pixels, so scale
+    // the measurements by deviceScaleFactor before deciding.
+    const rasterHeight = Math.round(pageSize.height * SCREENSHOT_SCALE);
+    const rasterWidth = Math.round(pageSize.width * SCREENSHOT_SCALE);
+    const format = pickScreenshotFormat(rasterHeight, rasterWidth);
+
     const screenshot = await page.screenshot({
       fullPage: true,
-      type: 'png'
+      type: format.type,
+      quality: format.quality
     });
 
-    // Upload screenshot to Supabase Storage
-    const screenshotFileName = `${auditId}/${generateFilename(url)}`;
-    const { data: uploadData, error: uploadError } = await supabase.storage
-      .from('screenshots')
-      .upload(screenshotFileName, screenshot, {
-        contentType: 'image/png',
-        upsert: true
-      });
-
-    if (uploadError) {
-      throw new Error(`Screenshot upload failed: ${uploadError.message}`);
+    // Upload screenshot to R2 (Cloudflare), not Supabase Storage
+    const screenshotKey = `${auditId}/${generateFilename(url, format.ext)}`;
+    let publicUrl;
+    try {
+      publicUrl = await uploadScreenshot(
+        screenshotKey,
+        screenshot,
+        format.contentType
+      );
+    } catch (err) {
+      throw new Error(`Screenshot upload failed: ${err.message}`);
     }
 
-    // Get public URL for screenshot
-    const { data: { publicUrl } } = supabase.storage
-      .from('screenshots')
-      .getPublicUrl(screenshotFileName);
-
-    console.log('   ✅ Screenshot uploaded');
+    console.log(
+      `   ✅ Screenshot uploaded (${format.ext}, ` +
+      `${(screenshot.length / 1024).toFixed(0)} KB, ` +
+      `${rasterWidth}x${rasterHeight}px)`
+    );
 
     // Extract design tokens
     const tokens = await extractDesignTokens(page, url);
@@ -635,8 +676,11 @@ async function processPage(browser, auditId, url, baseUrl, baseOrigin, designTok
  * Generate safe filename from URL.
  * Strips non-ASCII (storage rejects unicode keys) and appends a short
  * hash so distinct URLs that sanitize identically can't collide.
+ *
+ * @param {string} url
+ * @param {string} ext  extension without the dot, e.g. 'webp' or 'jpg'
  */
-function generateFilename(url) {
+function generateFilename(url, ext = 'webp') {
   const crypto = require('crypto');
   const base = url
     .replace(/^https?:\/\//, '')
@@ -644,7 +688,7 @@ function generateFilename(url) {
     .replace(/_{2,}/g, '_')
     .slice(0, 180);
   const hash = crypto.createHash('md5').update(url).digest('hex').slice(0, 8);
-  return `${base}_${hash}.png`;
+  return `${base}_${hash}.${ext}`;
 }
 
 /**

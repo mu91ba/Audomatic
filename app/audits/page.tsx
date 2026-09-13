@@ -79,16 +79,25 @@ export default function AuditsPage() {
 
     setDeleting(auditId)
     try {
-      const { data, error } = await supabase
-        .from('audits')
-        .delete()
-        .eq('id', auditId)
-        .select()
+      // Routed server-side so the audit's screenshots get removed from storage
+      // too. Deleting the row alone used to orphan every screenshot forever.
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token
+      if (!token) throw new Error('Not authenticated')
 
-      if (error) throw error
-      if (!data || data.length === 0) {
-        throw new Error('Delete was blocked — you may not have permission to delete this audit.')
-      }
+      const res = await fetch('/api/delete-audit', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ auditId }),
+      })
+
+      const result = await res.json()
+      if (!res.ok) throw new Error(result.error || 'Failed to delete audit')
+      if (result.warning) console.warn(result.warning)
+
       setAudits(audits.filter(a => a.id !== auditId))
     } catch (err: any) {
       console.error('Error deleting audit:', err)

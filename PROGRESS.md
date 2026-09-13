@@ -8,6 +8,199 @@
 
 ---
 
+## Session 2026-09-13 (later) — R2 rollout executed; migrated to a NEW Supabase project
+
+Continues the entry below, which described the plan. This is what actually
+happened. **Site is back up.** Working tree was uncommitted at session start;
+this session ends with a commit (not pushed).
+
+### The Supabase fork resolved as Path B — but not for the expected reason
+`_tmp-storage-check.js` assumed listing would work and only deletes might be
+blocked. In fact **every** endpoint behind the API gateway returned 402: REST,
+storage list, and storage delete (tested with a nonexistent key, so nothing was
+destroyed). Path A was unreachable. Direct Postgres on :5432 stayed reachable
+over IPv6 the whole time — the restriction is gateway-only.
+
+Also learned: **free-plan quota is per organisation, not per project**, so a new
+project inside `mu91ba` would have inherited the exhausted 1 GB. Resolved by
+creating a **new org `qanvos`** with project **`plyruluupcoikrobyzsy`**.
+
+### Schema was rebuilt, not migrated
+Old audits were abandoned by decision, so nothing was dumped. Applied
+migrations 001-015, plus two new ones:
+
+- **`016_reconcile_live_schema.sql`** — the repo migrations never created
+  `audits.updated_at`, `audits.title`, `audits.audit_data` or
+  `pages.template_urls`, yet production had all four and `crawler.js` writes
+  `template_urls` on every page insert. Production had been built by hand in
+  the dashboard and drifted.
+- **`017_fix_audits_select_policy.sql`** — the only SELECT policy on `audits`
+  was `user_can_access_audit(id)`, which re-queries `audits`. During
+  `INSERT ... RETURNING` (what `start-audit` does via `.select()`) the new row
+  isn't visible to that inner query, so it returned false and Postgres reported
+  *"new row violates row-level security policy"* — a read failure that reads
+  like a write failure. A plain INSERT succeeded, which is what isolated it.
+  Fixed by adding a direct-ownership SELECT policy alongside the shared path.
+
+The two Supabase-Storage statements at the tail of `001` were **deliberately
+omitted** — that bucket is what exhausted the old quota.
+
+### Crawler
+Deployed `crawler.js`, `server.js`, `storage.js`, `package.json`; ran
+`npm install` for `@aws-sdk/client-s3`. Backup at
+`/root/crawler-service/backups/2026-09-13/`.
+
+**`server.js` had a latent bug**: `require('dotenv').config()` sat on line 10,
+*after* `require('./crawler')`. `crawler.js` and `sitemap-parser.js` read
+`MAX_PAGES`, `CRAWL_DELAY_MS`, `SCREENSHOT_SCALE` and `MAX_SITEMAP_URLS` at
+module load, so those silently ignored `.env`. The VPS copy had an uncommitted
+hotfix with dotenv on line 1; the repo copy did not. Now fixed in the repo.
+
+### Verified end to end
+Crawl of example.com: WebP **1080x675** (confirms `SCREENSHOT_SCALE=0.75`),
+6 KB, stored at `img.qanvos.com/<auditId>/<file>.webp`, design tokens
+extracted, status `completed`. Deleting the audit cascaded all DB children.
+
+Also verified in isolation beforehand: R2 round trip, the WebP 16383px trap
+(forcing WebP at 1080x18810 returns **0 bytes**; the JPEG fallback produced a
+valid 128 KB file), and `deleteAuditScreenshots` emptying only its own prefix
+while leaving an unrelated audit untouched.
+
+### OPEN — the screenshot leak is NOT yet fixed in production
+`app/api/delete-audit/route.ts`, `lib/r2.ts` and the `app/audits/page.tsx`
+change exist only in the working tree. **Vercel builds from git**, and `main`
+has neither file, so the deployed app still deletes the audit row directly from
+the client and orphans the R2 object. Confirmed by observation: after deleting
+the test audit, all DB rows were gone but
+`a51f436f-.../example.com__182ccedb.webp` remained in the bucket.
+**Fixing this requires getting these commits onto whatever branch Vercel
+builds.** Not done — pushing needs the owner's approval, and
+`debug/shopify-crawl-fix` is deliberately unmerged.
+
+### Other open items
+- [ ] Supabase **Site URL** is still `http://localhost:3000` — confirmation,
+      invite and password-reset links all bounce to localhost.
+- [ ] Vercel `N8N_EXPORT_WEBHOOK_URL` points at `/webhook/audit-webhook`, the
+      **dead legacy** workflow. The export lives at `/webhook/export-audit`.
+- [ ] `n8n/export-workflow.json` has the **old** Supabase URL and apikey
+      hardcoded in its "Fetch Pages" node — Sheets export is broken until
+      updated in the n8n UI.
+- [ ] `n8n/audomatic-workflow.json` is dead — `start-audit` calls the crawler
+      directly. Safe to delete from n8n.
+- [ ] Old Supabase project `cmdybpjqhndjlfieilfg` still exists and still holds
+      the 0.961 GB. Delete once everything is settled. Its service_role key was
+      pasted into a chat transcript, so deleting the project retires it.
+- [ ] Vercel stores the service-role key and R2 secret as **Config**, not
+      Secret (readable in the dashboard). Cosmetic for a solo project.
+- [ ] `next.config.js` `remotePatterns` still lists only `**.supabase.co`.
+      Harmless today (plain `<img>`), needed if `next/image` is ever used.
+- [ ] Considering migrating hosting from Vercel to Cloudflare Workers via
+      `@opennextjs/cloudflare`. App is well suited (no middleware, no
+      `next/image`, no ISR, 4 simple API routes, `@react-pdf/renderer` and
+      `resend` are unused deps). Watch bundle size and Workers CPU limits.
+
+### Local tooling notes
+Node 26 breaks puppeteer 21's `yargs` dependency (ESM/CJS). Use
+`/opt/homebrew/opt/node@20/bin/node` locally. `psql`/`pg_dump` 18.6 at
+`/opt/homebrew/opt/libpq/bin/` (keg-only, not on PATH). No Docker on this Mac,
+so the Supabase CLI's `db dump` is unavailable — use `psql` directly.
+
+---
+
+## Session 2026-09-13 — Screenshots moved off Supabase Storage to Cloudflare R2
+
+**Branch:** working off current HEAD, **not committed/pushed** (standing rule).
+
+### Problem
+Supabase org `mu91ba` hit **0.961 / 1 GB storage (96%)** and every service began
+returning 402 (`exceed_storage_size_quota`). Login, crawler DB writes, the lot.
+Database was only 32 MB and egress 2% — storage alone was the problem. The
+Storage UI also refuses to load its bucket list while restricted, so the files
+could not be deleted through the dashboard (known Supabase catch-22).
+
+### Root causes
+1. **Uncompressed PNGs.** `crawler.js` captured `fullPage` `type: 'png'` at
+   deviceScaleFactor 1 — ~2.4 MB per page, ~430 pages per GB. `MAX_PAGES`
+   defaults to 500, so one large audit could fill the entire quota.
+2. **Screenshots were never deleted.** `app/audits/page.tsx` deleted the audit
+   row only; storage objects orphaned permanently. Every audit ever deleted was
+   still occupying the bucket.
+
+### Changes
+
+**`crawler-service/storage.js` (new)**
+- R2 upload via `@aws-sdk/client-s3`, returns the public URL.
+- `assertStorageConfig()` — fails a crawl fast on incomplete `.env` instead of
+  dying mid-upload or crash-looping pm2.
+- `pickScreenshotFormat()` — WebP q70 normally; **JPEG q82 above 16383px**.
+  WebP cannot encode a side longer than 16383px and Chrome returns a **0-byte
+  buffer with no error** when you try, so tall pages would have silently written
+  empty files. Measured and confirmed.
+
+**`crawler-service/crawler.js`**
+- Screenshots go to R2, not `supabase.storage`. Supabase now holds DB + auth only.
+- `SCREENSHOT_SCALE` env (default **0.75**). Layout still computes at 1440 CSS px;
+  only raster resolution drops, to 1080px. The canvas card renders at 280px
+  (`w-[280px]`) and the detail modal caps at 1024px (`max-w-5xl`), so 1080px is
+  still wider than anything the UI displays — no visible quality loss.
+- Format limits are checked against **raster** dimensions, not CSS dimensions.
+- `generateFilename(url, ext)` now takes an extension.
+- Object key shape unchanged: `${auditId}/${filename}` — required for prefix deletes.
+
+**`app/api/delete-audit/route.ts` (new) + `lib/r2.ts` (new)**
+- Deletes the audit row **first**, using the caller's own token so RLS decides
+  permission, then purges R2 under that audit's prefix. Doing storage first would
+  let a blocked delete still destroy the images of an audit that survives.
+- Never uses the service key — that would bypass RLS entirely.
+- `auditId` must match a uuid regex before it is used as a key prefix. An empty
+  or traversal-ish value would otherwise match and delete the whole bucket.
+- Storage failure returns success with a `warning`; the audit really is gone.
+
+**`app/audits/page.tsx`** — `deleteAudit()` calls the route instead of deleting
+directly. Existing permission-denied message preserved.
+
+**Frontend needed no other changes** — `screenshot_url` is a TEXT column rendered
+as a plain `<img src>`, no `next/image`, no storage SDK on the client.
+
+### Measured results (1440x11.7k page, headless Chromium)
+| | size | vs current |
+|---|---|---|
+| PNG @1.0 (old) | 2464 KB | — |
+| WebP q70 @1.0 | 827 KB | 3.0x |
+| **WebP q70 @0.75 (new)** | **540 KB** | **4.6x** |
+| WebP q70 @0.5 | 239 KB | 10.3x |
+
+Quality is a weak lever (q50 only buys ~15% over q70); pixel count is the strong
+one. ~430 screenshots per GB became ~1950. R2's free tier is 10 GB.
+
+### New env vars
+`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` —
+in **both** `crawler-service/.env` (VPS) and Vercel. Plus `R2_PUBLIC_BASE_URL`
+(crawler only), `https://img.qanvos.com`. No `NEXT_PUBLIC_` prefix — these must
+not reach the browser. Optional: `SCREENSHOT_SCALE`.
+
+### Open items / next steps
+- [ ] Cloudflare: create bucket, bind `img.qanvos.com` as custom domain, mint a
+      scoped Object Read & Write token. Domain `qanvos.com` is already on
+      Cloudflare (free plan, Full DNS).
+- [ ] `npm install` in repo root **and** `crawler-service/`.
+- [ ] **Do not deploy the crawler until R2 env is set** — `assertStorageConfig()`
+      will fail every crawl by design.
+- [ ] Run `_tmp-storage-check.js` (repo root, temporary — delete after) to learn
+      whether service-key deletes work while restricted. Success = purge the
+      bucket in place and skip the project migration entirely. 402 = fresh
+      Supabase project instead.
+- [ ] Existing 0.961 GB of screenshots are being abandoned by decision; old
+      audits will show broken images until re-run.
+- [ ] `next.config.js` `remotePatterns` still lists only `**.supabase.co`.
+      Harmless today (plain `<img>`), but needs `img.qanvos.com` if `next/image`
+      is ever used for screenshots.
+- [ ] Pre-existing, unrelated: `start-audit/route.ts` writes `error_message` on
+      failure, a column that doesn't exist in the live DB — those updates fail
+      silently. Same stale-schema issue noted on 2026-08-03.
+
+---
+
 ## Session 2026-08-03 — Shopify crawl fixes, grouping overhaul, VPS deploy
 
 **Branch:** `debug/shopify-crawl-fix` (8 commits, deployed to VPS, **not yet
