@@ -96,11 +96,15 @@ async function ensurePageFullyLoaded(page) {
 }
 
 /**
- * Handle and remove popups/modals
+ * Handle and remove popups/modals.
+ *
+ * `wait` exists so this can be run a second time just before the screenshot
+ * without paying the 3s of waits again — by then the page has already settled,
+ * we only need the DOM sweep.
  */
-async function handlePopups(page) {
+async function handlePopups(page, { wait = true } = {}) {
   try {
-    await page.waitForTimeout(2000);
+    if (wait) await page.waitForTimeout(2000);
     
     // Try to close common popup types
     await page.evaluate(() => {
@@ -119,7 +123,7 @@ async function handlePopups(page) {
       });
     });
 
-    await page.waitForTimeout(1000);
+    if (wait) await page.waitForTimeout(1000);
 
     // Remove popup elements from DOM
     const popupSelectors = [

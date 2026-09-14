@@ -551,6 +551,12 @@ async function processPage(browser, auditId, url, baseUrl, baseOrigin, designTok
     
     // Ensure page fully loaded
     await ensurePageFullyLoaded(page);
+
+    // Sweep again: nav drawers, newsletter modals and cookie banners often
+    // open on scroll or on a timer, so ensurePageFullyLoaded re-triggers what
+    // the first pass removed and it ends up in the screenshot. Skips the waits
+    // since the page has already settled.
+    await handlePopups(page, { wait: false });
     
     // Get page title, with fallbacks for pages that don't set <title>
     // (some Shopify themes only inject it client-side, or not at all)
