@@ -152,6 +152,32 @@ SCREENSHOT_SCALE (0.75), MAX_PAGES (500), CRAWL_DELAY_MS (10000)
 
 ---
 
+## Backups
+
+Supabase's free plan has no point-in-time recovery, and the audit data and user
+accounts exist nowhere else. `/root/sightmap-backup.sh` on the VPS runs nightly
+at 03:30 UTC via cron:
+
+- `pg_dump` of `public` (app tables) and `auth` (accounts) — other schemas are
+  Supabase-managed and any new project recreates them
+- gzipped to `/root/backups/db/`, newest 14 kept
+- optionally copied to the **private** `sightmap-backups` R2 bucket
+
+Config is `/root/.sightmap-backup.env` (chmod 600). Off-site upload is disabled
+until `R2_BACKUP_ACCESS_KEY_ID` / `R2_BACKUP_SECRET_ACCESS_KEY` are filled in —
+the screenshots token will not work, as it is scoped to that bucket. Without
+them the script still writes a local dump and exits clean.
+
+Backups must never go in `sightmap-screenshots`: that bucket is public via
+img.qanvos.com, so a dump there would be publicly downloadable.
+
+```bash
+ssh root@77.37.67.72 "/root/sightmap-backup.sh"     # run now
+ssh root@77.37.67.72 "tail /root/backups/backup.log"
+```
+
+---
+
 ## Gotchas
 
 Each of these cost real debugging time. Read before changing the related area.
@@ -217,6 +243,8 @@ Deleting an audit reclaims both.
       `main`. Review and merge when ready.
 - [ ] Rotate the Supabase service-role key and R2 token if the setup transcript
       was shared.
+- [ ] Fill in `R2_BACKUP_*` in `/root/.sightmap-backup.env` to enable off-site
+      backup copies (needs a new R2 token scoped to `sightmap-backups`).
 
 **Product ideas** (unchanged from the original roadmap)
 - [ ] Expose shape annotations in the toolbar (they exist, unexposed)
