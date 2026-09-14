@@ -1,217 +1,78 @@
 # Sightmap Crawler Service
 
-This is a standalone Node.js service that handles website crawling with Puppeteer. It's designed to run on your Hostinger VPS alongside n8n.
+Node + Express + Puppeteer. Crawls a site, screenshots every page, extracts
+design tokens, uploads to Cloudflare R2 and writes rows to Supabase.
 
-## Features
+Runs on the Hostinger VPS under pm2 as `audomatic-crawler`, bound to
+**127.0.0.1:3001** and reached only through a Cloudflare Tunnel at
+`crawler.qanvos.com`. It is not exposed on the public IP.
 
-- Fetches and parses sitemap.xml automatically
-- Takes full-page screenshots of all pages
-- Extracts design tokens (colors and typography)
-- Uploads screenshots to Supabase Storage
-- Saves all data to Supabase database
-- Real-time status updates during crawl
+## Files
 
-## Setup
+| File | Role |
+|---|---|
+| `server.js` | Express entry. Loads dotenv **first** (see below), auth middleware, `/crawl` and `/health`. |
+| `crawler.js` | Crawl loop: queue, screenshots, format choice, R2 upload, DB writes. |
+| `sitemap-parser.js` | Sitemap discovery, child-sitemap fetching, URL filtering. |
+| `page-utils.js` | Page settling, popup dismissal, design-token extraction. |
+| `storage.js` | R2 upload via the S3 API, plus format selection. |
 
-### 1. Install Dependencies
+## Endpoints
+
+`POST /crawl` — `{ "auditId": "<uuid>", "url": "https://..." }`, header
+`X-API-Secret`. Returns immediately; the crawl runs in the background and
+reports progress by updating the `audits` row.
+
+`GET /health` — `{ status, service, version }`.
+
+Auth fails closed: if `API_SECRET` is unset, every request is rejected.
+
+## Environment (`/root/crawler-service/.env`)
+
+```
+SUPABASE_URL=            SUPABASE_SERVICE_KEY=
+R2_ACCOUNT_ID=           R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=    R2_BUCKET=
+R2_PUBLIC_BASE_URL=https://img.qanvos.com
+API_SECRET=              PORT=3001            HOST=127.0.0.1
+SCREENSHOT_SCALE=0.75    MAX_PAGES=500        CRAWL_DELAY_MS=10000
+```
+
+`assertStorageConfig()` runs once at crawl start and fails the audit with a
+clear message if any R2 variable is missing, rather than dying mid-upload.
+
+## Deploy
 
 ```bash
-cd crawler-service
-npm install
+scp crawler-service/*.js root@77.37.67.72:/root/crawler-service/
+ssh root@77.37.67.72 "pm2 restart audomatic-crawler"
 ```
 
-### 2. Configure Environment Variables
-
-Copy `.env.example` to `.env` and fill in your values:
+Confirm no crawl is running first — a restart kills it. Back up the current
+files to `/root/crawler-service/backups/<date>/`. Rollback is restoring that
+folder and restarting.
 
 ```bash
-cp .env.example .env
+pm2 status && pm2 logs audomatic-crawler
+curl https://crawler.qanvos.com/health
+journalctl -u cloudflared -n 20      # tunnel
 ```
 
-Edit `.env`:
+## Things that will bite you
 
-```env
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SERVICE_KEY=your_service_role_key_here
-PORT=3001
-API_SECRET=choose_a_strong_secret_key
-ALLOWED_ORIGIN=*
-```
-
-**Important**: Use the **Service Role Key** (not the anon key) from Supabase for full database access.
-
-### 3. Run the Service
-
-Development mode (with auto-reload):
-```bash
-npm run dev
-```
-
-Production mode:
-```bash
-npm start
-```
-
-## API Endpoints
-
-### POST /crawl
-
-Start a website crawl.
-
-**Request:**
-```json
-{
-  "auditId": "uuid-of-audit",
-  "url": "https://example.com"
-}
-```
-
-**Headers:**
-```
-X-API-Secret: your_secret_key
-Content-Type: application/json
-```
-
-**Response:**
-```json
-{
-  "message": "Crawl started successfully",
-  "auditId": "uuid-of-audit",
-  "url": "https://example.com"
-}
-```
-
-### GET /health
-
-Health check endpoint.
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "service": "sightmap-crawler",
-  "version": "1.0.0"
-}
-```
-
-## Deployment on Hostinger VPS
-
-### 1. Upload Files
-
-Upload the `crawler-service` directory to your VPS:
-
-```bash
-scp -r crawler-service user@your-vps-ip:/home/user/
-```
-
-### 2. Install Dependencies on VPS
-
-```bash
-ssh user@your-vps-ip
-cd /home/user/crawler-service
-npm install
-```
-
-### 3. Run with PM2 (Process Manager)
-
-Install PM2 globally:
-```bash
-npm install -g pm2
-```
-
-Start the service:
-```bash
-pm2 start server.js --name sightmap-crawler
-pm2 save
-pm2 startup
-```
-
-Check status:
-```bash
-pm2 status
-pm2 logs sightmap-crawler
-```
-
-### 4. Configure Nginx (Optional)
-
-If you want to proxy the service through Nginx:
-
-```nginx
-location /crawler/ {
-    proxy_pass http://localhost:3001/;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection 'upgrade';
-    proxy_set_header Host $host;
-    proxy_cache_bypass $http_upgrade;
-}
-```
-
-## Usage with n8n
-
-In your n8n workflow, use an HTTP Request node to call this service:
-
-1. **Method**: POST
-2. **URL**: `http://localhost:3001/crawl` (or your VPS URL)
-3. **Headers**: 
-   - `X-API-Secret`: your secret key
-   - `Content-Type`: application/json
-4. **Body**:
-   ```json
-   {
-     "auditId": "{{$json.auditId}}",
-     "url": "{{$json.url}}"
-   }
-   ```
-
-## Troubleshooting
-
-### Puppeteer/Chrome issues
-
-If you get Chrome/Chromium errors on your VPS:
-
-```bash
-# Install Chrome dependencies
-sudo apt-get update
-sudo apt-get install -y \
-  gconf-service libasound2 libatk1.0-0 libc6 libcairo2 libcups2 \
-  libdbus-1-3 libexpat1 libfontconfig1 libgcc1 libgconf-2-4 \
-  libgdk-pixbuf2.0-0 libglib2.0-0 libgtk-3-0 libnspr4 libpango-1.0-0 \
-  libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 libxcb1 \
-  libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 \
-  libxrandr2 libxrender1 libxss1 libxtst6 ca-certificates \
-  fonts-liberation libappindicator1 libnss3 lsb-release xdg-utils wget
-```
-
-### Memory issues
-
-If crawling large sites causes memory issues, add to your launch args in `crawler.js`:
-
-```javascript
-args: [
-  '--max-old-space-size=4096', // Increase Node.js memory limit
-  // ... other args
-]
-```
-
-## Architecture
-
-```
-n8n Webhook 
-    ↓
-Crawler Service (Express)
-    ↓
-Puppeteer (crawl + screenshot)
-    ↓
-Supabase (Storage + Database)
-    ↓
-Frontend (Next.js) - Real-time updates
-```
-
-
-
-
-
-
-
-
+- **dotenv must load before `require('./crawler')`.** `crawler.js` and
+  `sitemap-parser.js` read `MAX_PAGES`, `CRAWL_DELAY_MS`, `SCREENSHOT_SCALE` and
+  `MAX_SITEMAP_URLS` at module load, so a late `dotenv.config()` silently leaves
+  them at their defaults.
+- **WebP cannot encode a dimension above 16383px**, and Chrome returns a
+  **0-byte buffer** instead of an error. `pickScreenshotFormat` switches to
+  JPEG q82 above that, comparing **raster** (CSS × `SCREENSHOT_SCALE`), not CSS,
+  dimensions. Re-test a very tall page after changing scale, quality or format.
+- **Popups are swept twice** — once early, once after `ensurePageFullyLoaded`,
+  because drawers and modals reopen on scroll. The second pass skips its waits
+  (`handlePopups(page, { wait: false })`).
+- **Shopify rate-limits this IP** (HTTP 429, decaying over hours), hence the 10s
+  pacing and escalating retries.
+- **Puppeteer 21 breaks on Node 26.** The VPS runs Node 20; keep it that way.
+- Object keys are `${auditId}/${filename}` — the app's delete route relies on
+  that prefix shape.

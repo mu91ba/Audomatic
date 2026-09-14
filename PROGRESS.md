@@ -2,9 +2,35 @@
 
 > Purpose: a single running log so any new agent/session can get up to speed
 > without re-reading every project file. **Add a dated entry for each work
-> session. Newest first.** See README.md / CONTEXT.md for architecture basics
-> (note: those files are older and partially stale — this file wins on
-> conflicts).
+> session. Newest first.** See README.md for current architecture, deploy steps,
+> environment variables and gotchas. This file is history; README.md is the
+> present state.
+
+---
+
+## Session 2026-09-13 (docs) — consolidated the markdown
+
+Five documents described five different versions of this project, three of them
+predating today entirely. Cut down to two.
+
+**Deleted:** `CONTEXT.md`, `PROJECT_STATUS.md`, `QUICKSTART.md`,
+`supabase/README.md`, `HANDOVER.md`, `Claude outputs/`, and
+`n8n/audomatic-workflow.json` (the dead crawl-trigger workflow).
+
+`supabase/README.md` was the dangerous one: it instructed the reader to create
+the public `screenshots` bucket and verify it exists — the exact thing that
+exhausted the quota and took the site down.
+
+**Rewritten:** `README.md` is now the single current-state document
+(architecture, deploy, environment, gotchas, capacity, open items). `CLAUDE.md`,
+`crawler-service/README.md` and `n8n/README.md` were all still describing
+Vercel, Supabase Storage and n8n-orchestrated crawling.
+
+**Kept:** this file, as the historical log.
+
+The gotchas section of README.md is the important artefact — it records the
+failure modes that cost real debugging time today, each of which looks like
+something else when you hit it.
 
 ---
 
@@ -386,7 +412,7 @@ credentials healthy (spreadsheet creation succeeded). Workflow name:
 - [ ] Consider excluding utility pages from crawl (/cart, /account, /search,
       /a/withdrawal, /apps/wishlist) or flagging them separately.
 
-### Older roadmap (from CONTEXT.md, still relevant)
+### Older roadmap (from the since-deleted CONTEXT.md, still relevant)
 - Shape annotations exist but not exposed in UI toolbar.
 - Canvas export PNG (PDF export was built Apr 2, needs testing).
 - Audit comparison over time; AI-powered insights.

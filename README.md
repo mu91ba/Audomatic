@@ -1,314 +1,227 @@
-# Sightmap — Visual Site Audit Tool
+# Sightmap
 
-A micro-SaaS application that automates website audits by crawling sites, extracting design tokens, capturing screenshots, and creating interactive visual sitemaps.
+Crawls a website, screenshots every page, extracts design tokens, and renders
+the result as an interactive visual sitemap on a React Flow canvas.
 
-## Features
+**Live:** https://qanvos.com
 
-- 🗺️ **Visual Sitemap** - Interactive canvas showing site structure with screenshots
-- 🎨 **Design Token Extraction** - Automatically extract colors and typography
-- 📸 **Full-Page Screenshots** - Capture every page on the site
-- 🔄 **Real-Time Updates** - Watch pages appear as they're crawled
-- 📝 **Annotations** - Add sticky notes to the canvas (coming soon)
-- 🎯 **Drag & Zoom** - Full canvas controls like Miro/FigJam
+> `PROGRESS.md` is the running session log — what changed, when, and why.
+> This file is the current state. Where they disagree, check the newest
+> PROGRESS.md entry.
+
+---
 
 ## Architecture
 
 ```
-Frontend (Next.js + React Flow)
-    ↓
-n8n Webhook (Orchestration)
-    ↓
-Crawler Service (Node.js + Puppeteer)
-    ↓
-Supabase (Database + Storage)
+Browser
+   │
+   ▼
+Cloudflare Worker  ──────────►  Supabase          (Postgres + Auth + Realtime)
+qanvos.com                          ▲
+   │                                │
+   │  POST /crawl                   │ writes pages, tokens, status
+   ▼                                │
+Cloudflare Tunnel                   │
+crawler.qanvos.com                  │
+   │                                │
+   ▼                                │
+Crawler (Node + Puppeteer) ─────────┘
+127.0.0.1:3001 on the VPS
+   │
+   ▼
+Cloudflare R2  ──►  img.qanvos.com   (screenshots)
 ```
 
-## Tech Stack
+| Component | Where | Notes |
+|---|---|---|
+| App | Cloudflare Worker `sightmap` → **qanvos.com** | Next.js 14 via `@opennextjs/cloudflare` |
+| Database + auth | Supabase `plyruluupcoikrobyzsy`, org `qanvos` | free plan, RLS enforced |
+| Screenshots | R2 bucket `sightmap-screenshots` → **img.qanvos.com** | WebP q70 @ 0.75 scale |
+| Crawler | Hostinger VPS `root@77.37.67.72`, pm2 `audomatic-crawler` | `/root/crawler-service/`, loopback only |
+| Crawler ingress | `cloudflared` systemd → **crawler.qanvos.com** | tunnel `sightmap-crawler` |
+| Sheets export | n8n (docker, same VPS) | `https://n8n.srv1051800.hstgr.cloud` |
 
-- **Frontend**: Next.js 14 (App Router), React Flow, shadcn/ui, Tailwind CSS
-- **Backend**: Node.js + Express + Puppeteer
-- **Database**: Supabase (PostgreSQL + Storage + Realtime)
-- **Orchestration**: n8n (self-hosted)
-- **Deployment**: Vercel (frontend), Hostinger VPS (crawler + n8n)
+The app calls the crawler **directly**. n8n is used only for the
+"Export to Google Sheets" button.
 
-## Setup Instructions
+---
 
-### Prerequisites
+## How a crawl works
 
-- Node.js 18+ installed
-- Supabase account
-- n8n instance (self-hosted on Hostinger VPS)
-- Vercel account (optional, for deployment)
+1. `POST /api/start-audit` inserts an `audits` row (RLS: owner only) and calls
+   the crawler over the tunnel.
+2. The crawler fetches sitemaps (all children, interleaved round-robin), falling
+   back to link discovery.
+3. Per page: load, dismiss popups, scroll to settle lazy content, dismiss popups
+   again, screenshot, extract colours and fonts, upload to R2, insert a `pages`
+   row.
+4. The canvas updates live over Supabase Realtime.
+5. Deleting an audit cascades its DB rows **and** purges its R2 prefix.
 
-### 1. Supabase Setup
+---
 
-1. Create a new project at [supabase.com](https://supabase.com)
-2. Go to **SQL Editor** and run the migration:
-   ```bash
-   # Copy content from: supabase/migrations/001_initial_schema.sql
-   ```
-3. Verify the `screenshots` storage bucket was created
-4. Note your project URL and anon key
-
-### 2. Crawler Service Setup
-
-The crawler service runs on your Hostinger VPS:
+## Local development
 
 ```bash
-# SSH into your VPS
-ssh user@your-vps-ip
-
-# Navigate to the project
-cd /path/to/sightmap/crawler-service
-
-# Install dependencies
 npm install
-
-# Configure environment
-cp .env.example .env
-nano .env
-
-# Add your values:
-# SUPABASE_URL=https://your-project.supabase.co
-# SUPABASE_SERVICE_KEY=your_service_role_key
-# PORT=3001
-# API_SECRET=your_secure_secret_key
-
-# Start with PM2 (process manager)
-npm install -g pm2
-pm2 start server.js --name sightmap-crawler
-pm2 save
-pm2 startup
+npm run dev                     # http://localhost:3000
 ```
 
-### 3. n8n Setup
+Needs `.env.local` (gitignored) — see **Environment** below.
 
-1. Import the workflow from `n8n/audomatic-workflow.json`
-2. Set environment variable:
-   ```bash
-   CRAWLER_API_SECRET=your_crawler_secret_key
-   ```
-3. Update the "Trigger Crawler Service" node URL if needed
-4. Activate the workflow
-5. Copy the webhook URL (you'll need it for the frontend)
-
-### 4. Frontend Setup
+The crawler runs on the VPS; there is normally no reason to run it locally. If
+you must:
 
 ```bash
-# Install dependencies
-npm install
-
-# Configure environment
-cp .env.example .env.local
-nano .env.local
-
-# Add your values:
-# NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-# NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
-# NEXT_PUBLIC_N8N_WEBHOOK_URL=https://your-n8n.com/webhook/audit-webhook
-
-# Run development server
-npm run dev
+cd crawler-service && npm install
+PUPPETEER_EXECUTABLE_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  /opt/homebrew/opt/node@20/bin/node server.js
 ```
 
-Open [http://localhost:3000](http://localhost:3000)
+---
 
-### 5. Deploy to Vercel
+## Deploying
+
+### App → Cloudflare Workers
+
+Wrangler deploys from **local files, not git**, so commit first or you will not
+be able to tell what is live.
 
 ```bash
-# Install Vercel CLI
-npm install -g vercel
-
-# Deploy
-vercel
-
-# Add environment variables in Vercel dashboard:
-# - NEXT_PUBLIC_SUPABASE_URL
-# - NEXT_PUBLIC_SUPABASE_ANON_KEY
-# - NEXT_PUBLIC_N8N_WEBHOOK_URL
+PATH="/opt/homebrew/opt/node@20/bin:$PATH" npx opennextjs-cloudflare build
+npx wrangler deploy
 ```
 
-## Usage
+Two different Node versions are required: the build needs **Node 20**, wrangler
+needs **Node ≥22**.
 
-1. **Start an Audit**
-   - Go to the homepage
-   - Enter a website URL (e.g., `https://example.com`)
-   - Click "Start Audit"
-
-2. **Watch the Canvas**
-   - You'll be redirected to the audit page
-   - Pages will appear in real-time as they're crawled
-   - The sitemap builds automatically with parent-child relationships
-
-3. **View Design Tokens**
-   - Click "Design Tokens" button
-   - Browse extracted colors and typography
-   - See usage frequency and inconsistencies
-
-4. **Interact with Canvas**
-   - **Zoom**: Mouse wheel or zoom controls
-   - **Pan**: Click and drag
-   - **View Page**: Click screenshot to see full version
-   - **Visit Page**: Click external link icon
-
-## Project Structure
-
-```
-Sightmap/
-├── app/                      # Next.js app directory
-│   ├── api/                  # API routes
-│   │   └── start-audit/      # Audit creation endpoint
-│   ├── audit/[id]/           # Audit canvas page
-│   └── page.tsx              # Homepage
-├── components/               # React components
-│   ├── ui/                   # shadcn/ui components
-│   ├── audit-canvas.tsx      # Main canvas component
-│   ├── page-node.tsx         # Custom React Flow node
-│   └── design-token-panel.tsx # Design tokens sidebar
-├── lib/                      # Utilities
-│   ├── supabase.ts          # Supabase client
-│   ├── utils.ts             # Helper functions
-│   └── layout.ts            # Canvas layout algorithm
-├── crawler-service/          # Standalone crawler service
-│   ├── server.js            # Express server
-│   ├── crawler.js           # Main crawling logic
-│   ├── sitemap-parser.js    # Sitemap fetching
-│   └── page-utils.js        # Page processing utilities
-├── n8n/                      # n8n workflow configuration
-│   ├── audomatic-workflow.json
-│   └── README.md
-└── supabase/                 # Database migrations
-    └── migrations/
-        └── 001_initial_schema.sql
-```
-
-## How It Works
-
-### Workflow
-
-1. **User submits URL** → Frontend creates audit in Supabase (status: pending)
-2. **Frontend triggers n8n** → Webhook receives request
-3. **n8n calls crawler service** → Passes audit ID and URL
-4. **Crawler fetches sitemap** → Parses all page URLs
-5. **For each page**:
-   - Opens in headless Chrome
-   - Handles popups/modals
-   - Waits for full page load
-   - Takes full-page screenshot
-   - Extracts design tokens (colors, fonts)
-   - Uploads screenshot to Supabase Storage
-   - Saves page data to database
-6. **Real-time updates** → Frontend receives updates via Supabase Realtime
-7. **Canvas renders** → Pages appear as tree structure
-8. **Audit completes** → Status updated to 'completed'
-
-### Design Token Extraction
-
-The crawler analyzes every element on each page:
-
-- **Colors**: Text color, background color, border color
-- **Typography**: Font families, weights, sizes
-
-It calculates:
-- **Frequency**: High/medium/low based on usage
-- **Flags**: Highlights inconsistencies (colors/sizes used ≤3 times)
-
-## Troubleshooting
-
-### Crawler Issues
+### Crawler → VPS
 
 ```bash
-# Check crawler service status
-pm2 status
-pm2 logs sightmap-crawler
-
-# Restart crawler
-pm2 restart sightmap-crawler
-
-# Test crawler health
-curl http://localhost:3001/health
+scp crawler-service/*.js root@77.37.67.72:/root/crawler-service/
+ssh root@77.37.67.72 "pm2 restart audomatic-crawler"
 ```
 
-### n8n Issues
+Check nothing is mid-crawl first — a restart kills it. Back up to
+`/root/crawler-service/backups/<date>/` before overwriting.
 
-- Verify workflow is **Active**
-- Check webhook URL matches `.env.local`
-- Test webhook directly with curl
-- Check n8n execution logs
-
-### Frontend Issues
+### Database
 
 ```bash
-# Clear Next.js cache
-rm -rf .next
-npm run dev
-
-# Check environment variables
-cat .env.local
+psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0NN_name.sql
 ```
 
-### Database Issues
+`psql` is keg-only at `/opt/homebrew/opt/libpq/bin/`. Migrations `001`–`018`
+reproduce the live schema from scratch.
 
-- Verify migration ran successfully
-- Check Supabase dashboard for data
-- Verify RLS policies allow access
+---
 
-## Development
+## Environment
 
-```bash
-# Run frontend in development mode
-npm run dev
+**Build-time** (`.env.local`, compiled into the bundle — changing these needs a
+rebuild, not just a redeploy):
 
-# Run crawler service in development mode
-cd crawler-service
-npm run dev
-
-# Build frontend for production
-npm run build
-npm start
+```
+NEXT_PUBLIC_SUPABASE_URL
+NEXT_PUBLIC_SUPABASE_ANON_KEY
+NEXT_PUBLIC_APP_URL
 ```
 
-## Environment Variables
+**Worker runtime** (`npx wrangler secret list`):
 
-### Frontend (.env.local)
-```env
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
-NEXT_PUBLIC_N8N_WEBHOOK_URL=your_n8n_webhook_url
+```
+SUPABASE_SERVICE_ROLE_KEY     # invite route: auth.admin + RLS bypass
+CRAWLER_URL                   # https://crawler.qanvos.com
+CRAWLER_API_SECRET
+N8N_EXPORT_WEBHOOK_URL        # .../webhook/export-audit
+N8N_EXPORT_WEBHOOK_SECRET
 ```
 
-### Crawler Service (.env)
-```env
-SUPABASE_URL=your_supabase_url
-SUPABASE_SERVICE_KEY=your_service_role_key
-PORT=3001
-API_SECRET=your_secret_key
-ALLOWED_ORIGIN=*
+R2 needs **no credentials** in the Worker — it uses the `SCREENSHOTS` binding
+declared in `wrangler.jsonc`.
+
+**Crawler** (`/root/crawler-service/.env`):
+
+```
+SUPABASE_URL, SUPABASE_SERVICE_KEY
+R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET, R2_PUBLIC_BASE_URL
+API_SECRET, PORT, HOST
+SCREENSHOT_SCALE (0.75), MAX_PAGES (500), CRAWL_DELAY_MS (10000)
 ```
 
-### n8n (Environment)
-```env
-CRAWLER_API_SECRET=your_secret_key
-```
+---
 
-## Future Enhancements
+## Gotchas
 
-- [ ] Sticky notes on canvas
-- [ ] User authentication
-- [ ] Multiple audits/projects
+Each of these cost real debugging time. Read before changing the related area.
+
+- **Never create a Supabase Storage bucket.** Screenshots live in R2. An
+  unbounded `screenshots` bucket is what exhausted the old project's 1 GB quota
+  and took the site down. Migration `001`'s bucket statements are deliberately
+  not applied.
+- **Delete audits through the app, never the Supabase table editor.** The R2
+  purge lives in `/api/delete-audit`; deleting rows directly orphans the images
+  with no way to trace them.
+- **Workers cannot fetch a raw IP over plain HTTP** — Cloudflare's edge returns
+  403 before the request leaves. That is why the crawler is behind a tunnel.
+- **`@aws-sdk/client-s3` throws at request time inside a Worker.** Use the R2
+  binding. The crawler still uses the SDK because it runs on a plain VPS.
+- **WebP cannot encode a dimension above 16383px** and Chrome returns a
+  **0-byte buffer** rather than an error. `pickScreenshotFormat` falls back to
+  JPEG, comparing **raster** (not CSS) dimensions. Re-test a very tall page if
+  you touch scale, quality or format.
+- **Realtime is a Postgres publication, not schema.** Tables must be in
+  `supabase_realtime` or subscriptions silently never fire (migration `018`).
+- **RLS policies that re-query their own table break `INSERT … RETURNING`** —
+  the new row is invisible to the inner query, and Postgres reports it as a
+  write violation (migration `017`).
+- **`@opennextjs/cloudflare` is pinned to 1.15.1**, the last version supporting
+  Next 14. Upgrading forces Next 15 + React 19, which drags
+  `reactflow@11` → `@xyflow/react@12` and touches the canvas.
+- **dotenv must load before `require('./crawler')`** — `crawler.js` and
+  `sitemap-parser.js` read their tuning constants at module load.
+- **Puppeteer 21 breaks on Node 26** (yargs ESM/CJS). Use Node 20 locally.
+- **Shopify rate-limits the VPS IP** (HTTP 429, decays over hours). Hence
+  `CRAWL_DELAY_MS=10000`. Local crawls from a residential IP avoid it.
+
+---
+
+## Capacity
+
+At ~116 KB per screenshot and ~6.4 KB per page row:
+
+| | Limit | Headroom |
+|---|---|---|
+| R2 | 10 GB free | ~88,000 screenshots |
+| Supabase DB | 500 MB free | ~76,000 page rows |
+| Supabase egress | 5 GB/mo | screenshots bypass it entirely (served from R2) |
+
+Deleting an audit reclaims both.
+
+---
+
+## Open items
+
+**Known issues**
+- [ ] Social-proof widgets ("X from Y purchased…") survive both popup passes —
+      they match none of the selectors in `handlePopups`.
+- [ ] `www.qanvos.com` is not attached to the Worker; only the apex is.
+- [ ] `next.config.js` `remotePatterns` still lists only `**.supabase.co`.
+      Harmless with plain `<img>`, needed if `next/image` is ever used.
+- [ ] Vercel stored some secrets as Config rather than Secret; the Cloudflare
+      equivalents should be reviewed if the project gains collaborators.
+
+**Housekeeping**
+- [ ] `debug/shopify-crawl-fix` is pushed but unmerged — 16 commits ahead of
+      `main`. Review and merge when ready.
+- [ ] Rotate the Supabase service-role key and R2 token if the setup transcript
+      was shared.
+
+**Product ideas** (unchanged from the original roadmap)
+- [ ] Expose shape annotations in the toolbar (they exist, unexposed)
 - [ ] Export canvas as PNG/PDF
-- [ ] Schedule recurring audits
 - [ ] Compare audits over time
-- [ ] AI-powered insights
-- [ ] Accessibility audit
-- [ ] Performance metrics
-- [ ] SEO analysis
-
-## License
-
-MIT
-
-## Support
-
-For issues or questions, please create an issue in the repository.
-
+- [ ] Scheduled recurring audits
+- [ ] Accessibility / performance / SEO checks
+- [ ] Revisit `MAX_PAGES=500` now that storage is ~20x cheaper per audit
