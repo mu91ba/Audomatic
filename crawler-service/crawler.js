@@ -305,7 +305,10 @@ async function crawlWebsite(auditId, websiteUrl) {
       // Don't fail the entire crawl if design tokens fail to save
     }
 
-    // Step 5: Mark audit as completed
+    // Step 5: Rebuild the tree by URL path
+    await reparentPagesByUrlPath(auditId, homepageUrl);
+
+    // Step 6: Mark audit as completed
     console.log('\n📝 Updating audit status to completed...');
     try {
       const { data, error: updateError } = await supabase
@@ -686,6 +689,96 @@ async function processPage(browser, auditId, url, baseUrl, baseOrigin, designTok
  * @param {string} url
  * @param {string} ext  extension without the dot, e.g. 'webp' or 'jpg'
  */
+/**
+ * Rebuild parent/child links from URL paths once the crawl has finished.
+ *
+ * During the crawl every sitemap-seeded URL is queued with the homepage as its
+ * discoverer, because sitemaps carry no hierarchy. The canvas draws its tree
+ * from `parent_url`, so the result was one homepage with every page hanging
+ * directly off it, no matter how the site is actually organised.
+ *
+ * This walks each URL's path upwards to the nearest ancestor that was actually
+ * crawled (/blogs/news/x -> /blogs/news -> /blogs), falling back to the
+ * homepage. URL structure is a proxy for site structure rather than proof of
+ * it, but it is a far better one than "everything is a child of the homepage".
+ *
+ * `discovered_from` is deliberately left alone: it records where the crawler
+ * genuinely found the page, which stays true regardless of how it is drawn.
+ *
+ * Runs after the crawl rather than per page because a page's ancestors may not
+ * have been crawled yet at the time it is inserted.
+ */
+async function reparentPagesByUrlPath(auditId, homepageUrl) {
+  const { data: pages, error } = await supabase
+    .from('pages')
+    .select('id, url, parent_url, level')
+    .eq('audit_id', auditId);
+
+  if (error) {
+    console.error('   \u26a0\ufe0f Could not re-parent pages:', error.message);
+    return;
+  }
+  if (!pages || pages.length === 0) return;
+
+  const crawled = new Set(pages.map(p => p.url));
+  const segmentsOf = (u) => {
+    try { return new URL(u).pathname.split('/').filter(Boolean); } catch { return []; }
+  };
+
+  // Shallowest first, so a parent's level is always known before its children.
+  // A parent always has strictly fewer segments, so this cannot cycle.
+  const ordered = [...pages].sort((a, b) => segmentsOf(a.url).length - segmentsOf(b.url).length);
+
+  const levelByUrl = new Map();
+  const updates = [];
+
+  for (const page of ordered) {
+    const segs = segmentsOf(page.url);
+    let parentUrl = null;
+
+    if (segs.length > 0) {
+      const origin = (() => { try { return new URL(page.url).origin; } catch { return null; } })();
+      if (origin) {
+        for (let i = segs.length - 1; i >= 1; i--) {
+          const candidate = `${origin}/${segs.slice(0, i).join('/')}`;
+          if (candidate !== page.url && crawled.has(candidate)) { parentUrl = candidate; break; }
+        }
+      }
+      if (!parentUrl && page.url !== homepageUrl && crawled.has(homepageUrl)) {
+        parentUrl = homepageUrl;
+      }
+    }
+
+    const level = parentUrl ? (levelByUrl.get(parentUrl) ?? 0) + 1 : 0;
+    levelByUrl.set(page.url, level);
+
+    if (page.parent_url !== parentUrl || page.level !== level) {
+      updates.push({ id: page.id, parent_url: parentUrl, level });
+    }
+  }
+
+  if (updates.length === 0) return;
+
+  // Most pages share a parent, so group them and issue one request per
+  // (parent, level) pair rather than one per row.
+  const groups = new Map();
+  for (const u of updates) {
+    const key = `${u.parent_url ?? ''}|${u.level}`;
+    if (!groups.has(key)) groups.set(key, { parent_url: u.parent_url, level: u.level, ids: [] });
+    groups.get(key).ids.push(u.id);
+  }
+
+  for (const g of groups.values()) {
+    const { error: updateError } = await supabase
+      .from('pages')
+      .update({ parent_url: g.parent_url, level: g.level })
+      .in('id', g.ids);
+    if (updateError) console.error('   \u26a0\ufe0f Re-parent update failed:', updateError.message);
+  }
+
+  console.log(`   \u2705 Rebuilt page hierarchy: ${updates.length} of ${pages.length} pages re-parented`);
+}
+
 function generateFilename(url, ext = 'webp') {
   const crypto = require('crypto');
   const base = url
