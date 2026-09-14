@@ -126,15 +126,29 @@ async function handlePopups(page, { wait = true } = {}) {
     if (wait) await page.waitForTimeout(1000);
 
     // Remove popup elements from DOM
+    // Class-based entries are generic on purpose; the id-based ones below are
+    // deliberately narrow. Both of those were found by inspecting a real crawl
+    // from the VPS — they are geo-gated and never appear from a residential IP,
+    // so they cannot be reproduced locally.
     const popupSelectors = [
-      '.modal', 
-      '.popup', 
-      '.cookie-banner', 
+      '.modal',
+      '.popup',
+      '.cookie-banner',
       '.cookie-consent',
       '.newsletter-popup',
       '[role="dialog"]',
       '[aria-modal="true"]',
-      '.modal-backdrop'
+      '.modal-backdrop',
+      // Shopify's built-in privacy banner. Shown only to visitors in regions
+      // that require consent, which is why it appears in VPS crawls and not
+      // from most dev machines.
+      '#shopify-pc__banner',
+      '#shopify-pc__prefs',
+      // "<name> from <place> purchased ..." social-proof widget. Matched by id
+      // rather than anything generic: the class names these apps use overlap
+      // with ordinary page furniture, and removing real content is worse than
+      // leaving a badge in the corner.
+      '#cb-widget-sales-pop'
     ];
 
     for (const selector of popupSelectors) {
