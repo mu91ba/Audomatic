@@ -25,7 +25,7 @@ export default function AuditPage() {
   const [showShareModal, setShowShareModal] = useState(false)
   const [showCompleteToast, setShowCompleteToast] = useState(false)
   const wasCompleteRef = useRef(false)
-  const { user } = useAuth()
+  const { user, loading: authLoading } = useAuth()
 
   const isOwner = audit?.user_id === user?.id
 
@@ -37,11 +37,33 @@ export default function AuditPage() {
      audit.total_pages > 0 &&
      audit.processed_pages === audit.total_pages)
 
+  // Wait for the session before querying.
+  //
+  // supabase-js restores and refreshes the session asynchronously, so a query
+  // fired on mount goes out carrying only the anon key. Every RLS policy on
+  // `audits` needs auth.uid(), so that request matches zero rows and .single()
+  // reports it as "Cannot coerce the result to a single JSON object" — which
+  // reads like corrupt data rather than "you were not signed in yet".
+  //
+  // The owner rarely saw it because they arrive from /audits with the session
+  // already in memory. An invited viewer opens /audit/<id> straight from the
+  // invite email, which is a cold load every time.
+  //
+  // /audits has always gated its own query on `user` for this reason.
   useEffect(() => {
+    if (authLoading) return
+
+    if (!user) {
+      setError('Please sign in to view this audit.')
+      setLoading(false)
+      return
+    }
+
     loadAuditData()
     const cleanup = subscribeToUpdates()
     return cleanup
-  }, [auditId])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auditId, authLoading, user?.id])
 
   // Show "Complete" toast when status transitions to complete
   useEffect(() => {
@@ -55,14 +77,25 @@ export default function AuditPage() {
 
   async function loadAuditData() {
     try {
-      // Load audit
+      // maybeSingle, not single: RLS filtering every row out is a normal
+      // outcome here (wrong account, share revoked, bad link), and .single()
+      // turns it into an opaque coercion error.
       const { data: auditData, error: auditError } = await supabase
         .from('audits')
         .select('*')
         .eq('id', auditId)
-        .single()
+        .maybeSingle()
 
       if (auditError) throw auditError
+
+      if (!auditData) {
+        setError(
+          "This audit doesn't exist, or it hasn't been shared with the account you're signed in as."
+        )
+        setLoading(false)
+        return
+      }
+
       setAudit(auditData)
 
       // Load pages

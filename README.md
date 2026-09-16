@@ -237,6 +237,13 @@ Each of these cost real debugging time. Read before changing the related area.
   strings differ, so dedupe misses — and `//x/y` never matches its parent `/x`,
   so the page lands at the top of the tree. sportbc.com did this on 9 of 62
   URLs, 6 of them straight duplicates.
+- **Query only after the session resolves.** supabase-js restores and refreshes
+  the session asynchronously, so a Supabase call fired from a `useEffect` on
+  mount goes out with just the anon key and every RLS-protected table returns
+  zero rows. With `.single()` that surfaces as "Cannot coerce the result to a
+  single JSON object", which looks nothing like an auth problem. Gate on
+  `loading` from `useAuth()`, as `/audits` does, and prefer `.maybeSingle()`
+  wherever RLS filtering everything out is a legitimate outcome.
 - **Dagre ranks by edges, not by `page.level`.** Setting a sensible `level` on
   a row changes nothing on the canvas; only an edge to a parent node moves a
   card down a rank. Dagre also returns each node's *centre*, and a rank's

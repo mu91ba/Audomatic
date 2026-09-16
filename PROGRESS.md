@@ -8,6 +8,46 @@
 
 ---
 
+## Session 2026-09-16 — "Cannot coerce the result to a single JSON object"
+
+Invited viewers could open a shared audit once, then got that error on every
+reload. Reported against production, which is still running `main`: neither the
+access-control branch nor migration 019 is deployed, so this is a pre-existing
+bug, not fallout from either.
+
+### Not an RLS problem
+The share rows were healthy — accepted, `shared_with_user_id` resolved, emails
+matching exactly. Replaying migrations `001`-`018` locally with the real rows
+copied from production: **1 row returned with a session, 0 without**. The
+policies were always right.
+
+### The race
+`app/audit/[id]/page.tsx` fired `loadAuditData()` from a `useEffect` keyed only
+on `auditId`, so it ran on mount. supabase-js restores and refreshes the session
+asynchronously, so that query goes out carrying only the anon key. Every SELECT
+policy on `audits` needs `auth.uid()`, so it matched zero rows — and `.single()`
+reports zero rows as "Cannot coerce the result to a single JSON object", which
+reads like corrupt data rather than "not signed in yet".
+
+`app/audits/page.tsx` never had the bug: it gates its query on `user`.
+
+The owner rarely hit it because they reach an audit from /audits, with the
+session already in memory. An invited viewer opens /audit/<id> straight from the
+invite email — a cold load every time, and `detectSessionInUrl` has to parse the
+hash first, which is strictly slower.
+
+### Fix
+Wait for `authLoading` to finish, and re-run when the account changes. Zero rows
+is now an ordinary outcome via `.maybeSingle()`, reported as "this audit doesn't
+exist, or it hasn't been shared with the account you're signed in as" — which is
+also the honest message when a share is revoked or the link is wrong. Not signed
+in at all says so.
+
+Checked the other on-mount queries: the canvas, token panel and share modal all
+mount only after the audit has loaded, so they inherit the gate.
+
+---
+
 ## Session 2026-09-15 (later) — the canvas now shows URL depth
 
 Same branch. The sportbc.com audit drew as one flat row: 58 of 62 pages
