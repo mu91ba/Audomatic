@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { supabase, type Audit, type Page as PageType } from '@/lib/supabase'
 import { AuditCanvas } from '@/components/audit-canvas'
-import { Loader2, AlertCircle, CheckCircle2, Home, Sheet, Users } from 'lucide-react'
+import { Loader2, AlertCircle, CheckCircle2, Home, Sheet, Users, Eye } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { UserMenu } from '@/components/auth/user-menu'
@@ -234,11 +234,12 @@ export default function AuditPage() {
                 )}
               </div>
             )}
-            {/* Shared badge for non-owners */}
+            {/* Shared badge for non-owners. Read-only is the whole deal for a
+                shared audit — say so rather than letting them find out. */}
             {!isOwner && (
               <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
-                <Users className="h-3 w-3" />
-                Shared with you
+                <Eye className="h-3 w-3" />
+                Shared with you · view only
               </span>
             )}
             {/* Complete toast — shows briefly then disappears */}
@@ -293,7 +294,7 @@ export default function AuditPage() {
           auditId={auditId}
           pages={pages}
           auditStatus={audit?.status || 'pending'}
-          userRole={isOwner ? 'owner' : 'commenter'}
+          userRole={isOwner ? 'owner' : 'viewer'}
           initialCanvasLayout={audit?.canvas_layout ?? null}
         />
       </div>

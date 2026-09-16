@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+import { authenticate } from '@/lib/auth-server'
+import { canCreateAudits } from '@/lib/role'
 
 const RATE_LIMIT_MAX = 5
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000 // 1 hour
@@ -21,26 +19,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid URL format' }, { status: 400 })
     }
 
-    // Require authentication
-    const authHeader = request.headers.get('authorization')
-    const token = authHeader?.replace('Bearer ', '')
-    if (!token) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 })
-    }
+    const auth = await authenticate(request)
+    if (!auth.ok) return auth.response
+    const { user, role, supabase } = auth.caller
 
-    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    })
-
-    const { data: { user } } = await supabase.auth.getUser(token)
-    if (!user) {
-      return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 })
-    }
-
-    // Invitees (users created via audit share invite) cannot create audits
-    if (user.user_metadata?.role === 'invitee') {
+    // Only approved accounts may crawl. This check is the friendly error
+    // message; the actual enforcement is the audits INSERT policy in migration
+    // 019, since the browser holds a Supabase token and could insert directly.
+    if (!canCreateAudits(role)) {
       return NextResponse.json(
-        { error: 'Invited collaborators cannot create new audits' },
+        { error: 'Your account does not have permission to run audits.' },
         { status: 403 }
       )
     }

@@ -1,12 +1,19 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, useRef, useCallback, ReactNode } from 'react'
 import { User, Session } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
+import { parseRole, DEFAULT_ROLE, type AppRole } from '@/lib/role'
 
 interface AuthContextType {
   user: User | null
   session: Session | null
+  /**
+   * Read from the app_users table, not from the JWT. user_metadata is writable
+   * by the account holder, so a role carried there could be edited from the
+   * browser console (migration 019).
+   */
+  role: AppRole
   loading: boolean
   signOut: () => Promise<void>
 }
@@ -14,6 +21,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType>({
   user: null,
   session: null,
+  role: DEFAULT_ROLE,
   loading: true,
   signOut: async () => {},
 })
@@ -33,67 +41,84 @@ interface AuthProviderProps {
 export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null)
   const [session, setSession] = useState<Session | null>(null)
+  const [role, setRole] = useState<AppRole>(DEFAULT_ROLE)
   const [loading, setLoading] = useState(true)
   const resolvedRef = useRef(false)
 
-  // Resolve pending shares when a user signs in
-  async function resolvePendingShares(signedInUser: User) {
-    if (resolvedRef.current || !signedInUser.email) return
+  /**
+   * Claim any audits shared with this address before the account existed.
+   *
+   * This used to be a direct UPDATE on audit_shares. The policy behind it had
+   * a USING clause and no WITH CHECK, which let a viewer repoint their own
+   * share row at somebody else's audit_id. The policy is gone; the database
+   * function only ever matches rows addressed to the caller's own JWT email.
+   */
+  const acceptPendingShares = useCallback(async () => {
+    if (resolvedRef.current) return
     resolvedRef.current = true
     try {
-      const { error } = await supabase
-        .from('audit_shares')
-        .update({
-          shared_with_user_id: signedInUser.id,
-          status: 'accepted',
-          accepted_at: new Date().toISOString(),
-        })
-        .eq('shared_with_email', signedInUser.email)
-        .is('shared_with_user_id', null)
-
+      const { error } = await supabase.rpc('accept_pending_shares')
       if (error) {
-        // Non-fatal — shares will resolve on next login after RLS fix
-        console.warn('Could not resolve pending shares:', error.message)
+        // Non-fatal: the owner still sees the invite, and it resolves next login.
+        console.warn('Could not claim pending shares:', error.message)
       }
     } catch (err) {
-      console.warn('Error resolving pending shares:', err)
+      console.warn('Error claiming pending shares:', err)
     }
-  }
+  }, [])
+
+  const loadRole = useCallback(async (signedInUser: User) => {
+    try {
+      const { data, error } = await supabase
+        .from('app_users')
+        .select('role')
+        .eq('id', signedInUser.id)
+        .maybeSingle()
+
+      if (error) throw error
+      setRole(parseRole(data?.role))
+    } catch (err) {
+      // Deny by default: a lookup failure must not read as full access.
+      console.warn('Could not load account role:', err)
+      setRole(DEFAULT_ROLE)
+    }
+  }, [])
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session)
-      setUser(session?.user ?? null)
-      if (session?.user) resolvePendingShares(session.user)
-      setLoading(false)
-    })
+    async function applySession(nextSession: Session | null) {
+      setSession(nextSession)
+      setUser(nextSession?.user ?? null)
 
-    // Listen for auth changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
-      setSession(session)
-      setUser(session?.user ?? null)
-      if (event === 'SIGNED_IN' && session?.user) {
-        resolvePendingShares(session.user)
+      if (nextSession?.user) {
+        await acceptPendingShares()
+        await loadRole(nextSession.user)
+      } else {
+        resolvedRef.current = false
+        setRole(DEFAULT_ROLE)
       }
       setLoading(false)
+    }
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      applySession(session)
+    })
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      applySession(session)
     })
 
     return () => subscription.unsubscribe()
-  }, [])
+  }, [acceptPendingShares, loadRole])
 
   const signOut = async () => {
     await supabase.auth.signOut()
   }
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, signOut }}>
+    <AuthContext.Provider value={{ user, session, role, loading, signOut }}>
       {children}
     </AuthContext.Provider>
   )
 }
-
-
-

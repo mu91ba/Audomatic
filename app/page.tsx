@@ -10,21 +10,21 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { supabase } from '@/lib/supabase'
-import { isInvitee } from '@/lib/role'
+import { canCreateAudits } from '@/lib/role'
 
 export default function Home() {
   const router = useRouter()
-  const { user, loading } = useAuth()
+  const { user, role, loading } = useAuth()
   const [url, setUrl] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
-  // Invitees can't create audits — send them to the shared-audits list instead.
+  // Viewers can't create audits — send them to the shared-audits list instead.
   useEffect(() => {
-    if (!loading && user && isInvitee(user)) {
+    if (!loading && user && !canCreateAudits(role)) {
       router.replace('/audits')
     }
-  }, [loading, user, router])
+  }, [loading, user, role, router])
 
   // Show loading state while checking auth
   if (loading) {
@@ -35,8 +35,8 @@ export default function Home() {
     )
   }
 
-  // If user is a logged-in account holder, show the audit creation form
-  if (user && !isInvitee(user)) {
+  // Approved accounts (admin or member) get the audit creation form
+  if (user && canCreateAudits(role)) {
     const handleSubmit = async (e: React.FormEvent) => {
       e.preventDefault()
       setError('')
@@ -150,8 +150,8 @@ export default function Home() {
     )
   }
 
-  // While the invitee redirect is in flight, show a spinner.
-  if (user && isInvitee(user)) {
+  // While the viewer redirect is in flight, show a spinner.
+  if (user && !canCreateAudits(role)) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-6 bg-gradient-to-b from-background to-muted/20">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />

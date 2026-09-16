@@ -61,6 +61,36 @@ The app calls the crawler **directly**. n8n is used only for the
 
 ---
 
+## Accounts and access
+
+There are no open signups. Every account has a role, held in the `app_users`
+table:
+
+| Role | Can |
+|---|---|
+| `admin` | approve applications at `/admin`, plus everything a member can |
+| `member` | run audits, own them, share them read-only |
+| `viewer` | read the audits shared with them. Nothing else. |
+
+New accounts default to `viewer` — a trigger on `auth.users` creates the row —
+so an account that appears without going through `/admin` can do nothing.
+
+**Getting in:** apply at `/apply` → a row lands in `access_requests` → an admin
+approves at `/admin` → Supabase emails an invite and the role becomes `member`.
+No password is ever collected by the application form.
+
+**Sharing** is read-only by design. A viewer sees the canvas, the pages and the
+owner's annotations, and cannot annotate, move a node, export, reshare, or see
+that any other audit exists.
+
+The role must be read from `app_users` and never from the JWT — see Gotchas.
+
+```bash
+./supabase/tests/run.sh    # rebuild the schema locally and assert every rule above
+```
+
+---
+
 ## Local development
 
 ```bash
@@ -112,8 +142,9 @@ Check nothing is mid-crawl first — a restart kills it. Back up to
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/0NN_name.sql
 ```
 
-`psql` is keg-only at `/opt/homebrew/opt/libpq/bin/`. Migrations `001`–`018`
-reproduce the live schema from scratch.
+`psql` is keg-only at `/opt/homebrew/opt/libpq/bin/`. Migrations `001`–`019`
+reproduce the live schema from scratch; `./supabase/tests/run.sh` proves they
+still do.
 
 ---
 
@@ -182,6 +213,22 @@ ssh root@77.37.67.72 "tail /root/backups/backup.log"
 
 Each of these cost real debugging time. Read before changing the related area.
 
+- **A role in `user_metadata` is not a permission.** `supabase.auth.updateUser
+  ({ data: ... })` lets an account rewrite its own metadata — the account
+  settings modal does exactly that to save a display name. The old
+  `role: 'invitee'` check could therefore be switched off from the browser
+  console. Roles live in `app_users`, which no client role may write
+  (migration `019`).
+- **An RLS `UPDATE` policy needs `WITH CHECK`, not just `USING`.** `USING`
+  tests the row as it was; without `WITH CHECK` the *updated* row is never
+  validated. Migration `011`'s share policy let a viewer repoint their own
+  share row at any audit id they knew and read it. Where the columns must not
+  move at all, drop the policy and do the write in a `SECURITY DEFINER`
+  function instead — `accept_pending_shares()` in `019`.
+- **API-route permission checks are messages, not controls.** The browser holds
+  a Supabase token and can write to the database directly, so anything
+  `/api/start-audit` refuses must also be refused by a policy. Every check in a
+  route has a matching rule in `019`.
 - **Never create a Supabase Storage bucket.** Screenshots live in R2. An
   unbounded `screenshots` bucket is what exhausted the old project's 1 GB quota
   and took the site down. Migration `001`'s bucket statements are deliberately
@@ -239,8 +286,12 @@ Deleting an audit reclaims both.
       equivalents should be reviewed if the project gains collaborators.
 
 **Housekeeping**
-- [ ] `debug/shopify-crawl-fix` is pushed but unmerged — 16 commits ahead of
-      `main`. Review and merge when ready.
+- [ ] **Turn off signups in Supabase** — Authentication → Sign In / Providers →
+      Email → disable "Allow new users to sign up". Removing the form from the
+      UI does not close `/auth/v1/signup`; migration `019` is the backstop that
+      leaves any account created behind the app's back as a `viewer`.
+- [x] `debug/shopify-crawl-fix` — merged. It and `main` are both at `902cc46`;
+      the "16 commits ahead" note was stale.
 - [ ] Rotate the Supabase service-role key and R2 token if the setup transcript
       was shared.
 - [ ] Fill in `R2_BACKUP_*` in `/root/.sightmap-backup.env` to enable off-site

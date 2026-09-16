@@ -8,6 +8,81 @@
 
 ---
 
+## Session 2026-09-15 — approval-gated accounts; shares are now read-only
+
+Branch `feat/share-access-control`, not merged, not deployed, migration **not
+applied**. Goal: viewers see only what was shared with them, nobody gets an
+account without approval.
+
+### What the old model actually allowed
+Three holes, found by reading rather than by anything breaking. All three are
+reproduced as failing tests against `001`–`018` in `supabase/tests/`.
+
+1. **The role was self-editable.** `isInvitee()` read
+   `user.user_metadata.role`, and `supabase.auth.updateUser({ data: ... })` is
+   a normal user-facing call — account-settings-modal.tsx already used it for
+   the display name. Any invitee could grant themselves `role: 'owner'` from
+   the console and walk past the 403 in `/api/start-audit`.
+2. **Access defaulted to "full account".** `isFullAccount()` returned true for
+   anyone not explicitly marked `invitee`, and Supabase signups were open, so
+   registering was enough to be able to crawl.
+3. **`audit_shares` UPDATE had `USING` and no `WITH CHECK`** (migration `011`).
+   Postgres validates only the pre-update row against `USING`, so a viewer
+   could take the one share they legitimately held, change its `audit_id`, and
+   read any audit whose uuid they knew. Verified: the attack returns the
+   unshared audit's url on the current schema and returns nothing after `019`.
+
+Hole 3 is the one that leaked data. The other two granted compute.
+
+### The new model
+Roles live in `app_users` (`admin` / `member` / `viewer`), which has RLS on and
+**no write policy for any client role** — only the service key and the
+`auth.users` trigger write it. New accounts default to `viewer`.
+
+- Applications: `/apply` → `access_requests` → `/admin` → `inviteUserByEmail`
+  + role `member`. No password is collected by the form.
+- `access_requests` has RLS enabled and *no policies at all*; anonymous
+  applications go through `/api/request-access` on the service key, so there is
+  no anonymous grant on the table to probe.
+- Shared audits are read-only: annotation INSERT/UPDATE moved from
+  `user_can_access_audit()` to `user_is_audit_owner()`.
+- The share-acceptance UPDATE was removed from the client entirely and replaced
+  by `accept_pending_shares()`, a SECURITY DEFINER function that can only match
+  rows addressed to the caller's own JWT email.
+- Every route check now has a matching policy. The routes return the readable
+  error; the database is what actually refuses.
+
+### The backfill is deliberately not "everyone keeps what they had"
+Signups were open, so grandfathering every existing account as a member would
+preserve exactly the access this change removes. Rule: owns ≥1 audit → `member`,
+`muneeba.design@gmail.com` → `admin`, everyone else → `viewer`. The migration
+RAISEs a NOTICE naming everyone it demoted, and `/admin` → Accounts puts anyone
+back in one click.
+
+### Testing
+`supabase/tests/run.sh` builds a throwaway Postgres cluster, replays `001`–`019`
+with a stub for the Supabase-managed bits (`auth.users`, `auth.uid()`,
+`auth.jwt()`, the realtime publication), seeds a realistic pre-019 deployment,
+and asserts 20 things each role can and cannot do. All 20 pass. It touches
+nothing remote.
+
+It caught one defect before it shipped: `019`'s "no admin" guard aborted on an
+*empty* database, which would have broken the "migrations rebuild the schema
+from scratch" property that `016` exists to protect. It now only refuses when
+accounts exist and none is an admin.
+
+### Not done
+- [ ] Migration `019` has **not** been applied to the live database.
+- [ ] Signups are still open in the Supabase dashboard — Authentication →
+      Sign In / Providers → Email → "Allow new users to sign up". Removing the
+      form does not close `/auth/v1/signup`.
+- [ ] Nothing pushed, nothing deployed.
+- [ ] Not tested against the real Supabase: the stub covers the schema shape,
+      not Supabase's own auth behaviour (invite emails, `inviteUserByEmail`
+      returning an existing user, the `auth.users` trigger's permissions).
+
+---
+
 ## Session 2026-09-13 (docs) — consolidated the markdown
 
 Five documents described five different versions of this project, three of them

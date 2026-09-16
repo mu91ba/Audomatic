@@ -44,7 +44,8 @@ interface AuditCanvasProps {
   auditId: string
   pages: PageType[]
   auditStatus: string
-  userRole?: 'owner' | 'commenter'
+  /** Shared audits are read-only: only the owner may annotate or move nodes. */
+  userRole?: 'owner' | 'viewer'
   initialCanvasLayout?: CanvasLayout | null
 }
 
@@ -95,8 +96,11 @@ function AuditCanvasInner({ auditId, pages, auditStatus, userRole, initialCanvas
     if (initialCanvasLayout) setCanvasLayout(initialCanvasLayout)
   }, [initialCanvasLayout])
 
-  // Persist layout to DB when the owner drags a node
+  // Persist layout to DB when the owner drags a node.
+  // Viewers never reach this (nodes aren't draggable for them), and the audits
+  // UPDATE policy would refuse anyway — the guard just avoids a console error.
   useEffect(() => {
+    if (userRole !== 'owner') return
     if (!layoutDirtyRef.current) return
     layoutDirtyRef.current = false
     supabase
@@ -106,7 +110,7 @@ function AuditCanvasInner({ auditId, pages, auditStatus, userRole, initialCanvas
       .then(({ error }) => {
         if (error) console.error('Error saving canvas layout:', error)
       })
-  }, [canvasLayout, auditId])
+  }, [canvasLayout, auditId, userRole])
 
   // Load annotations from Supabase
   const loadAnnotations = useCallback(async () => {
@@ -427,23 +431,29 @@ function AuditCanvasInner({ auditId, pages, auditStatus, userRole, initialCanvas
     }
   }, [auditId, annotations.length])
 
+  // Writing annotations is the owner's alone (migration 019). The toolbar is
+  // hidden for viewers; this stops a stray drop or paste from trying anyway.
+  const canAnnotate = userRole === 'owner'
+
   // Click on canvas to place annotation
   const handlePaneClick = useCallback(async (event: React.MouseEvent) => {
+    if (!canAnnotate) return
     const placementTools = ['text', 'sticky_note', 'rectangle', 'circle', 'line', 'arrow']
     if (!placementTools.includes(activeTool)) return
     const flowPosition = screenToFlowPosition({ x: event.clientX, y: event.clientY })
     await createAnnotationAt(activeTool, flowPosition)
     setActiveTool('select')
-  }, [activeTool, screenToFlowPosition, createAnnotationAt])
+  }, [activeTool, screenToFlowPosition, createAnnotationAt, canAnnotate])
 
   // Handle drag-from-toolbar drop onto canvas
   const handleDrop = useCallback(async (event: React.DragEvent) => {
     event.preventDefault()
+    if (!canAnnotate) return
     const tool = event.dataTransfer.getData('application/sightmap-tool') as AnnotationTool
     if (!tool) return
     const flowPosition = screenToFlowPosition({ x: event.clientX, y: event.clientY })
     await createAnnotationAt(tool, flowPosition)
-  }, [screenToFlowPosition, createAnnotationAt])
+  }, [screenToFlowPosition, createAnnotationAt, canAnnotate])
 
   const handleDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault()
@@ -517,14 +527,17 @@ function AuditCanvasInner({ auditId, pages, auditStatus, userRole, initialCanvas
           }}
         />
         
-        {/* Bottom Center - FigJam-style Toolbar */}
-        <Panel position="bottom-center" className="mb-4">
-          <AnnotationToolbar
-            activeTool={activeTool}
-            onToolChange={setActiveTool}
-            onDragStart={handleToolbarDragStart}
-          />
-        </Panel>
+        {/* Bottom Center - FigJam-style Toolbar. Owner only: a shared audit
+            is read-only, and the annotation policies refuse viewer writes. */}
+        {canAnnotate && (
+          <Panel position="bottom-center" className="mb-4">
+            <AnnotationToolbar
+              activeTool={activeTool}
+              onToolChange={setActiveTool}
+              onDragStart={handleToolbarDragStart}
+            />
+          </Panel>
+        )}
 
         {/* Top Right Panel - Design Tokens button */}
         <Panel position="top-right" className="flex gap-2">

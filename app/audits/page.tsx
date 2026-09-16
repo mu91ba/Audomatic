@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { supabase, type Audit, type AuditShare } from '@/lib/supabase'
 import { useAuth } from '@/components/auth/auth-provider'
-import { isInvitee } from '@/lib/role'
+import { canCreateAudits } from '@/lib/role'
 import { AppHeader } from '@/components/app-header'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -26,7 +26,7 @@ export default function AuditsPage() {
   const [audits, setAudits] = useState<AuditWithOwnership[]>([])
   const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState<string | null>(null)
-  const { user, loading: authLoading } = useAuth()
+  const { user, role, loading: authLoading } = useAuth()
   const router = useRouter()
 
   useEffect(() => {
@@ -43,7 +43,7 @@ export default function AuditsPage() {
 
   async function loadAudits() {
     try {
-      // Load own audits
+      // Owned audits and audits shared with this account, per RLS.
       const { data: ownAudits, error: ownError } = await supabase
         .from('audits')
         .select('*')
@@ -51,12 +51,9 @@ export default function AuditsPage() {
 
       if (ownError) throw ownError
 
-      // Load shared audits via audit_shares
-      const { data: shares } = await supabase
-        .from('audit_shares')
-        .select('audit_id')
-
-      const sharedAuditIds = new Set((shares || []).map(s => s.audit_id))
+      // Shared audits already arrive in the query above — the audits SELECT
+      // policy covers both owned and shared rows. A second audit_shares query
+      // used to run here and its result was never read.
 
       // Mark ownership
       const allAudits: AuditWithOwnership[] = (ownAudits || []).map(a => ({
@@ -184,7 +181,8 @@ export default function AuditsPage() {
     return null // Will redirect
   }
 
-  const userIsInvitee = isInvitee(user)
+  // Viewers see only what has been shared with them: no crawling, no deleting.
+  const readOnlyAccount = !canCreateAudits(role)
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
@@ -195,15 +193,15 @@ export default function AuditsPage() {
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-3xl font-bold">
-              {userIsInvitee ? 'Shared with me' : 'My Audits'}
+              {readOnlyAccount ? 'Shared with me' : 'My Audits'}
             </h1>
             <p className="text-muted-foreground mt-1">
-              {userIsInvitee
+              {readOnlyAccount
                 ? 'Audits collaborators have shared with you'
                 : 'View and manage your website audits'}
             </p>
           </div>
-          {!userIsInvitee && (
+          {!readOnlyAccount && (
             <Link href="/">
               <Button>
                 <Plus className="h-4 w-4 mr-2" />
@@ -219,14 +217,14 @@ export default function AuditsPage() {
               <div className="text-center">
                 <div className="text-4xl mb-4">📊</div>
                 <h3 className="text-lg font-semibold mb-2">
-                  {userIsInvitee ? 'Nothing shared with you yet' : 'No audits yet'}
+                  {readOnlyAccount ? 'Nothing shared with you yet' : 'No audits yet'}
                 </h3>
                 <p className="text-muted-foreground mb-6">
-                  {userIsInvitee
+                  {readOnlyAccount
                     ? "When someone shares an audit with you, it'll appear here."
                     : 'Start your first website audit to see it here'}
                 </p>
-                {!userIsInvitee && (
+                {!readOnlyAccount && (
                   <Link href="/">
                     <Button>
                       <Plus className="h-4 w-4 mr-2" />

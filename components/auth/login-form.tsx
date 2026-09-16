@@ -1,47 +1,37 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Loader2, Mail, Lock, UserPlus, LogIn } from 'lucide-react'
+import { Loader2, Mail, Lock, LogIn } from 'lucide-react'
 
-type AuthMode = 'login' | 'signup'
-
+/**
+ * Sign-in only. Accounts are created by an admin approving an application at
+ * /apply — see app/api/admin/access-requests. Removing the sign-up form does
+ * not by itself close Supabase's /auth/v1/signup endpoint; that is a dashboard
+ * setting, and migration 019 is the backstop that leaves any account created
+ * behind the app's back as a viewer with nothing to look at.
+ */
 export function LoginForm() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [message, setMessage] = useState('')
-  const [mode, setMode] = useState<AuthMode>('login')
   const router = useRouter()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-    setMessage('')
     setLoading(true)
 
     try {
-      if (mode === 'signup') {
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-        })
-        if (error) throw error
-        setMessage('Check your email for a confirmation link!')
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        })
-        if (error) throw error
-        // Successful login - redirect to audits page
-        router.push('/audits')
-      }
+      const { error } = await supabase.auth.signInWithPassword({ email, password })
+      if (error) throw error
+      router.push('/audits')
     } catch (err: any) {
       setError(err.message || 'An error occurred')
     } finally {
@@ -52,14 +42,8 @@ export function LoginForm() {
   return (
     <Card className="w-full max-w-md shadow-lg">
       <CardHeader className="text-center">
-        <CardTitle className="text-2xl">
-          {mode === 'login' ? 'Welcome Back' : 'Create Account'}
-        </CardTitle>
-        <CardDescription>
-          {mode === 'login'
-            ? 'Sign in to access your audits'
-            : 'Sign up to start auditing websites'}
-        </CardDescription>
+        <CardTitle className="text-2xl">Welcome Back</CardTitle>
+        <CardDescription>Sign in to access your audits</CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -100,56 +84,25 @@ export function LoginForm() {
             </div>
           )}
 
-          {message && (
-            <div className="p-3 rounded-md bg-green-50 text-green-700 text-sm">
-              {message}
-            </div>
-          )}
-
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? (
               <Loader2 className="h-4 w-4 animate-spin" />
-            ) : mode === 'login' ? (
+            ) : (
               <>
                 <LogIn className="h-4 w-4 mr-2" />
                 Sign In
-              </>
-            ) : (
-              <>
-                <UserPlus className="h-4 w-4 mr-2" />
-                Sign Up
               </>
             )}
           </Button>
 
           <div className="text-center text-sm text-muted-foreground">
-            {mode === 'login' ? (
-              <>
-                Don&apos;t have an account?{' '}
-                <button
-                  type="button"
-                  onClick={() => setMode('signup')}
-                  className="text-primary hover:underline font-medium"
-                >
-                  Sign up
-                </button>
-              </>
-            ) : (
-              <>
-                Already have an account?{' '}
-                <button
-                  type="button"
-                  onClick={() => setMode('login')}
-                  className="text-primary hover:underline font-medium"
-                >
-                  Sign in
-                </button>
-              </>
-            )}
+            Don&apos;t have an account?{' '}
+            <Link href="/apply" className="text-primary hover:underline font-medium">
+              Apply for access
+            </Link>
           </div>
         </form>
       </CardContent>
     </Card>
   )
 }
-

@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { authenticate, serviceClient } from '@/lib/auth-server'
+import { canCreateAudits } from '@/lib/role'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-
+/**
+ * Share an audit with someone, read-only.
+ *
+ * An invited account is created as a `viewer` by the auth.users trigger in
+ * migration 019 — it can read the audits shared with it and nothing else. It
+ * cannot crawl, and it cannot reshare: the ownership check below is server-side,
+ * so hiding the Share button is presentation, not the control.
+ */
 export async function POST(request: NextRequest) {
   try {
     const { auditId, email } = await request.json()
@@ -13,20 +18,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'auditId and email are required' }, { status: 400 })
     }
 
-    // Authenticate caller
-    const authHeader = request.headers.get('authorization')
-    const token = authHeader?.replace('Bearer ', '')
-    if (!token) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 })
+    const normalisedEmail = String(email).trim().toLowerCase()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalisedEmail)) {
+      return NextResponse.json({ error: 'Invalid email address' }, { status: 400 })
     }
 
-    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    })
+    const auth = await authenticate(request)
+    if (!auth.ok) return auth.response
+    const { user, role, supabase } = auth.caller
 
-    const { data: { user } } = await supabase.auth.getUser(token)
-    if (!user) {
-      return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 })
+    // Viewers own no audits, so the ownership check below would refuse them
+    // anyway. Failing here gives them the accurate reason.
+    if (!canCreateAudits(role)) {
+      return NextResponse.json(
+        { error: 'Your account does not have permission to share audits.' },
+        { status: 403 }
+      )
     }
 
     // Verify caller owns the audit
@@ -45,7 +52,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Prevent self-invite
-    if (email.toLowerCase() === user.email?.toLowerCase()) {
+    if (normalisedEmail === user.email?.toLowerCase()) {
       return NextResponse.json({ error: 'You cannot invite yourself' }, { status: 400 })
     }
 
@@ -54,28 +61,26 @@ export async function POST(request: NextRequest) {
       .from('audit_shares')
       .select('id')
       .eq('audit_id', auditId)
-      .eq('shared_with_email', email.toLowerCase())
-      .single()
+      .eq('shared_with_email', normalisedEmail)
+      .maybeSingle()
 
     if (existingShare) {
       return NextResponse.json({ error: 'This user has already been invited' }, { status: 409 })
     }
 
-    // Create admin client for user lookup and invites
-    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
-      auth: { autoRefreshToken: false, persistSession: false },
-    })
+    // Admin client for user lookup, the share row and the invite email
+    const supabaseAdmin = serviceClient()
 
     // Check if invitee already has an account
     const { data: existingUsers } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
     const invitee = existingUsers?.users?.find(
-      u => u.email?.toLowerCase() === email.toLowerCase()
+      u => u.email?.toLowerCase() === normalisedEmail
     )
 
     // Insert share record using admin client (bypasses RLS)
     const shareData = {
       audit_id: auditId,
-      shared_with_email: email.toLowerCase(),
+      shared_with_email: normalisedEmail,
       role: 'commenter',
       invited_by: user.id,
       status: invitee ? 'accepted' : 'pending',
@@ -94,17 +99,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to create invite' }, { status: 500 })
     }
 
-    // Only send Supabase invite email for NEW users (not existing accounts)
+    // Only send Supabase invite email for NEW users (not existing accounts).
+    // The new account lands as a viewer via the auth.users trigger; nothing
+    // here needs to set a role, and nothing here should change the role of an
+    // existing account that happens to be a member.
     if (!invitee) {
       const appUrl =
         process.env.NEXT_PUBLIC_APP_URL ||
-        (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null) ||
         request.headers.get('origin') ||
         'http://localhost:3000'
       try {
-        await supabaseAdmin.auth.admin.inviteUserByEmail(email.toLowerCase(), {
+        await supabaseAdmin.auth.admin.inviteUserByEmail(normalisedEmail, {
           redirectTo: `${appUrl}/audit/${auditId}`,
-          data: { role: 'invitee' },
         })
       } catch (emailErr) {
         console.error('Error sending invite email:', emailErr)
@@ -126,24 +132,29 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'shareId is required' }, { status: 400 })
     }
 
-    const authHeader = request.headers.get('authorization')
-    const token = authHeader?.replace('Bearer ', '')
-    if (!token) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 })
-    }
+    const auth = await authenticate(request)
+    if (!auth.ok) return auth.response
+    const { supabase } = auth.caller
 
-    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    })
-
-    const { error } = await supabase
+    // Deleted under the caller's own token, so the "Owner can delete shares"
+    // policy decides. .select() matters: without it a delete that RLS filtered
+    // to zero rows returns no error, and the caller was told it succeeded.
+    const { data, error } = await supabase
       .from('audit_shares')
       .delete()
       .eq('id', shareId)
+      .select()
 
     if (error) {
       console.error('Error deleting share:', error)
       return NextResponse.json({ error: 'Failed to remove invite' }, { status: 500 })
+    }
+
+    if (!data || data.length === 0) {
+      return NextResponse.json(
+        { error: 'Only the audit owner can remove this invite.' },
+        { status: 403 }
+      )
     }
 
     return NextResponse.json({ success: true })

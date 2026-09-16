@@ -2,13 +2,14 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useAuth } from './auth-provider'
+import { isAdmin, canCreateAudits } from '@/lib/role'
 import { AccountSettingsModal } from './account-settings-modal'
 import { Button } from '@/components/ui/button'
-import { User, LogOut, ChevronDown, FolderOpen, Settings } from 'lucide-react'
+import { User, LogOut, ChevronDown, FolderOpen, Settings, ShieldCheck } from 'lucide-react'
 import Link from 'next/link'
 
 export function UserMenu() {
-  const { user, signOut } = useAuth()
+  const { user, role, signOut } = useAuth()
   const [isOpen, setIsOpen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -59,7 +60,9 @@ export function UserMenu() {
           {/* User email */}
           <div className="px-4 py-2 border-b">
             <p className="text-sm font-medium truncate">{user.email}</p>
-            <p className="text-xs text-muted-foreground">Signed in</p>
+            <p className="text-xs text-muted-foreground">
+              {isAdmin(role) ? 'Admin' : canCreateAudits(role) ? 'Signed in' : 'View-only access'}
+            </p>
           </div>
 
           {/* Menu items */}
@@ -70,8 +73,18 @@ export function UserMenu() {
               className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-gray-50 transition-colors"
             >
               <FolderOpen className="h-4 w-4" />
-              My Audits
+              {canCreateAudits(role) ? 'My Audits' : 'Shared with me'}
             </Link>
+            {isAdmin(role) && (
+              <Link
+                href="/admin"
+                onClick={() => setIsOpen(false)}
+                className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-gray-50 transition-colors"
+              >
+                <ShieldCheck className="h-4 w-4" />
+                Admin
+              </Link>
+            )}
             <button
               onClick={() => {
                 setIsOpen(false)
