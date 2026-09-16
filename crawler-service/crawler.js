@@ -406,6 +406,11 @@ function normalizeUrl(url) {
     const urlObj = new URL(url);
     // Remove hash
     urlObj.hash = '';
+    // Collapse doubled slashes. sportbc.com links to both /about and //about;
+    // they are the same page, but the two strings compare unequal, so the
+    // crawler visited and screenshotted each one and the ancestor walk in
+    // reparentPagesByUrlPath could never match "//x/y" to its parent "/x".
+    urlObj.pathname = urlObj.pathname.replace(/\/{2,}/g, '/');
     // Remove common tracking/locale params so URL variants don't crawl twice
     ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'ref', 'country', 'locale', 'currency'].forEach(p =>
       urlObj.searchParams.delete(p)

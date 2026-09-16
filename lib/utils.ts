@@ -7,14 +7,21 @@ export function cn(...inputs: ClassValue[]) {
 
 /**
  * Safely extract pathname from a URL string
- * Returns the original string if URL parsing fails
+ * Returns the original string if URL parsing fails.
+ *
+ * Doubled slashes are collapsed: sportbc.com links to //about as often as
+ * /about, and the card printed the raw "//about" back at the reader.
  */
 export function getPathname(url: string): string {
+  let path: string
   try {
-    return new URL(url).pathname || '/'
+    path = new URL(url).pathname
   } catch {
     return url
   }
+  path = path.replace(/\/{2,}/g, '/')
+  if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1)
+  return path || '/'
 }
 
 /**

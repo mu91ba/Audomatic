@@ -23,6 +23,7 @@ import { StickyNoteNode, STICKY_NOTE_COLORS } from './sticky-note-node'
 import { TextAnnotationNode } from './text-annotation-node'
 import { ShapeNode } from './shape-node'
 import { StandaloneFrameNode } from './standalone-frame-node'
+import { FolderNode } from './folder-node'
 import { DesignTokenPanel } from './design-token-panel'
 import { AnnotationToolbar, AnnotationTool } from './annotation-toolbar'
 import { calculateLayout } from '@/lib/layout'
@@ -38,6 +39,7 @@ const nodeTypes = {
   textAnnotation: TextAnnotationNode,
   shapeNode: ShapeNode,
   standaloneFrame: StandaloneFrameNode,
+  folderNode: FolderNode,
 }
 
 interface AuditCanvasProps {

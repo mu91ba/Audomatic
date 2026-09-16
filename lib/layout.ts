@@ -2,11 +2,18 @@ import { Node, Edge, MarkerType } from 'reactflow'
 import dagre from 'dagre'
 import { type Page } from './supabase'
 import { detectUrlPattern } from './utils'
+import { buildUrlHierarchy, type HierarchyEntry } from './hierarchy'
 
 export { detectUrlPattern }
 
 // Minimum number of pages with same pattern to group them
 const MIN_PAGES_TO_GROUP = 4
+
+// Dagre needs a height per node to space ranks. Page cards are tall because the
+// screenshot is full-page; group cards and folder cards are not.
+const PAGE_HEIGHT = 900
+const GROUP_HEIGHT = 320
+const FOLDER_HEIGHT = 90
 
 /**
  * Group pages by URL pattern (e.g., all blog posts together)
@@ -93,7 +100,7 @@ export function calculateLayout(pages: Page[]) {
       },
     })
     // Tall height for dagre spacing; actual card height is determined by image
-    dagreGraph.setNode(page.id, { width: 280, height: 900 })
+    dagreGraph.setNode(page.id, { width: 280, height: PAGE_HEIGHT })
   }
 
   // Create nodes for grouped pages
@@ -121,7 +128,7 @@ export function calculateLayout(pages: Page[]) {
       },
     })
     // Grouped nodes are slightly shorter since they have a smaller screenshot
-    dagreGraph.setNode(groupId, { width: 280, height: 320 })
+    dagreGraph.setNode(groupId, { width: 280, height: GROUP_HEIGHT })
   }
 
   // Create nodes for template pages (pre-grouped by crawler)
@@ -146,91 +153,79 @@ export function calculateLayout(pages: Page[]) {
         representativeScreenshot: page.screenshot_url,
       },
     })
-    dagreGraph.setNode(groupId, { width: 280, height: 320 })
+    dagreGraph.setNode(groupId, { width: 280, height: GROUP_HEIGHT })
   }
 
-  // Create a map of URL to node ID (including groups)
-  const urlToNodeId = new Map<string, string>()
-  
-  // Map individual pages
+  // ------------------------------------------------------------------
+  // Parent every node by its URL path.
+  //
+  // This used to read page.parent_url, which the crawler sets to the nearest
+  // ancestor it actually crawled. Date permalinks have no crawled ancestor
+  // (/2026 and /2026/07 are archive routes, not pages), so those pages fell
+  // back to the homepage and the whole site drew as one flat row. See
+  // lib/hierarchy.ts — missing ancestors become folder nodes instead.
+  // ------------------------------------------------------------------
+  const entries: HierarchyEntry[] = []
+
   for (const page of individualPages) {
-    urlToNodeId.set(page.url, page.id)
+    entries.push({ id: page.id, url: page.url })
   }
-  
-  // Map grouped pages to their group node
   for (const [pattern, groupPages] of Array.from(groupedPages.entries())) {
-    const groupId = `group-${pattern.replace(/[/*]/g, '_')}`
-    for (const page of groupPages) {
-      urlToNodeId.set(page.url, groupId)
-    }
+    // A group sits where its members sit, so any member's URL places it.
+    entries.push({ id: `group-${pattern.replace(/[/*]/g, '_')}`, url: groupPages[0].url })
   }
-
-  // Map template pages (pre-grouped by crawler)
   for (const page of templatePages) {
-    urlToNodeId.set(page.url, `template-${page.id}`)
+    entries.push({ id: `template-${page.id}`, url: page.url })
   }
 
-  // Create edges based on parent-child relationships
-  const createdEdges = new Set<string>() // Track edges to avoid duplicates
-  
-  // Edges for individual pages
-  for (const page of individualPages) {
-    if (page.parent_url) {
-      const parentNodeId = urlToNodeId.get(page.parent_url)
-      const childNodeId = page.id
-      
-      if (parentNodeId && parentNodeId !== childNodeId) {
-        const edgeKey = `${parentNodeId}-${childNodeId}`
-        if (!createdEdges.has(edgeKey)) {
-          edges.push(createEdge(parentNodeId, childNodeId))
-          dagreGraph.setEdge(parentNodeId, childNodeId)
-          createdEdges.add(edgeKey)
-        }
-      }
-    }
+  const { folders, parentOf } = buildUrlHierarchy(entries)
+
+  // Folder nodes are shorter than page cards — they carry no screenshot.
+  for (const folder of folders) {
+    nodes.push({
+      id: folder.id,
+      type: 'folderNode',
+      position: { x: 0, y: 0 },
+      data: {
+        label: folder.label,
+        childCount: folder.childCount,
+        isDateFolder: folder.isDateFolder,
+      },
+    })
+    dagreGraph.setNode(folder.id, { width: 280, height: FOLDER_HEIGHT })
   }
 
-  // Edges for template pages (pre-grouped by crawler)
-  for (const page of templatePages) {
-    const groupId = `template-${page.id}`
-    if (page.parent_url) {
-      const parentNodeId = urlToNodeId.get(page.parent_url)
-      if (parentNodeId && parentNodeId !== groupId) {
-        const edgeKey = `${parentNodeId}-${groupId}`
-        if (!createdEdges.has(edgeKey)) {
-          edges.push(createEdge(parentNodeId, groupId))
-          dagreGraph.setEdge(parentNodeId, groupId)
-          createdEdges.add(edgeKey)
-        }
-      }
-    }
-  }
-
-  // Edges for grouped pages (connect to parent of the group)
-  for (const [pattern, groupPages] of Array.from(groupedPages.entries())) {
-    const groupId = `group-${pattern.replace(/[/*]/g, '_')}`
-    
-    // Find a parent for this group (use the parent of the first page that has one)
-    for (const page of groupPages) {
-      if (page.parent_url) {
-        const parentNodeId = urlToNodeId.get(page.parent_url)
-        
-        // Only connect if parent is not in the same group
-        if (parentNodeId && parentNodeId !== groupId) {
-          const edgeKey = `${parentNodeId}-${groupId}`
-          if (!createdEdges.has(edgeKey)) {
-            edges.push(createEdge(parentNodeId, groupId))
-            dagreGraph.setEdge(parentNodeId, groupId)
-            createdEdges.add(edgeKey)
-          }
-          break // Only need one edge to parent
-        }
-      }
-    }
+  const createdEdges = new Set<string>()
+  for (const [childId, parentId] of Array.from(parentOf.entries())) {
+    if (!parentId || parentId === childId) continue
+    const edgeKey = `${parentId}-${childId}`
+    if (createdEdges.has(edgeKey)) continue
+    edges.push(createEdge(parentId, childId))
+    dagreGraph.setEdge(parentId, childId)
+    createdEdges.add(edgeKey)
   }
 
   // Calculate layout
   dagre.layout(dagreGraph)
+
+  const heightOf = (node: Node) =>
+    node.type === 'folderNode' ? FOLDER_HEIGHT
+    : node.type === 'groupedPageNode' ? GROUP_HEIGHT
+    : PAGE_HEIGHT
+
+  // Dagre returns each node's centre, and a rank's centre line is shared by
+  // every node in it. Positioning each card at centre - itsOwnHeight/2 would
+  // leave a 90px folder floating in the middle of a row of 900px page cards.
+  // Cards are top-aligned instead, so a row reads as a row.
+  const rankTop = new Map<number, number>()
+  for (const node of nodes) {
+    const positioned = dagreGraph.node(node.id)
+    if (!positioned) continue
+    const centre = Math.round(positioned.y)
+    const top = centre - heightOf(node) / 2
+    const current = rankTop.get(centre)
+    if (current === undefined || top < current) rankTop.set(centre, top)
+  }
 
   // Apply calculated positions to nodes
   const layoutedNodes = nodes.map((node) => {
@@ -241,12 +236,12 @@ export function calculateLayout(pages: Page[]) {
         position: { x: 0, y: 0 },
       }
     }
-    const height = node.type === 'groupedPageNode' ? 320 : 900
+    const centre = Math.round(nodeWithPosition.y)
     return {
       ...node,
       position: {
         x: nodeWithPosition.x - 140, // Center the node (half of width: 280/2)
-        y: nodeWithPosition.y - height / 2,
+        y: rankTop.get(centre) ?? nodeWithPosition.y - heightOf(node) / 2,
       },
     }
   })
@@ -257,7 +252,7 @@ export function calculateLayout(pages: Page[]) {
     const CARD_WIDTH = 280
     const CARD_GAP = 50
     const FRAME_PADDING = 40
-    const CARD_HEIGHT = 900
+    const CARD_HEIGHT = PAGE_HEIGHT
     const FRAME_GAP = 300 // horizontal gap between tree and standalone frame
 
     // Find the rightmost edge of the entire tree

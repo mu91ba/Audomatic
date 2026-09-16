@@ -59,6 +59,25 @@ The app calls the crawler **directly**. n8n is used only for the
 4. The canvas updates live over Supabase Realtime.
 5. Deleting an audit cascades its DB rows **and** purges its R2 prefix.
 
+### How the tree is drawn
+
+`lib/hierarchy.ts` derives the parent of every card from its **URL path**, not
+from `parent_url`. Sitemaps carry no hierarchy, so the crawler records most
+pages as discovered from the homepage; `reparentPagesByUrlPath` improves on
+that but can only attach a page to an ancestor that was itself crawled.
+
+Date permalinks have no such ancestor — `/2026`, `/2026/07` and `/2026/07/20`
+are archive routes, not pages — so those pages fell back to the homepage. On
+sportbc.com that put 58 of 62 pages in a single row.
+
+Missing ancestors are therefore drawn as **folder nodes**: dashed, no
+screenshot, clearly not a page that was visited. A run of date segments
+collapses to the year, so a post sits at `/` → `/2026` → post rather than
+gaining three ranks of near-empty year/month/day cards.
+
+Because this is computed at render time, changing it re-draws existing audits
+with no re-crawl.
+
 ---
 
 ## Accounts and access
@@ -213,6 +232,16 @@ ssh root@77.37.67.72 "tail /root/backups/backup.log"
 
 Each of these cost real debugging time. Read before changing the related area.
 
+- **Collapse doubled slashes when normalising a URL.** A site that links to
+  both `/about` and `//about` gets crawled and screenshotted twice — the
+  strings differ, so dedupe misses — and `//x/y` never matches its parent `/x`,
+  so the page lands at the top of the tree. sportbc.com did this on 9 of 62
+  URLs, 6 of them straight duplicates.
+- **Dagre ranks by edges, not by `page.level`.** Setting a sensible `level` on
+  a row changes nothing on the canvas; only an edge to a parent node moves a
+  card down a rank. Dagre also returns each node's *centre*, and a rank's
+  centre line is shared, so cards of different heights in one rank must be
+  top-aligned by hand or short cards float in the middle of tall ones.
 - **A role in `user_metadata` is not a permission.** `supabase.auth.updateUser
   ({ data: ... })` lets an account rewrite its own metadata — the account
   settings modal does exactly that to save a display name. The old
@@ -277,6 +306,9 @@ Deleting an audit reclaims both.
 ## Open items
 
 **Known issues**
+- [ ] Existing audits still contain the duplicate rows the doubled-slash bug
+      created (6 on sportbc.com). The fix is in `normalizeUrl`, so a re-crawl
+      clears them; nothing rewrites rows already stored.
 - [ ] Social-proof widgets ("X from Y purchased…") survive both popup passes —
       they match none of the selectors in `handlePopups`.
 - [ ] `www.qanvos.com` is not attached to the Worker; only the apex is.

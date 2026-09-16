@@ -8,6 +8,55 @@
 
 ---
 
+## Session 2026-09-15 (later) — the canvas now shows URL depth
+
+Same branch. The sportbc.com audit drew as one flat row: 58 of 62 pages
+directly under the homepage, including 23 news posts four segments deep.
+
+### Two causes, both confirmed against the live rows
+1. **No crawled ancestor.** The posts are WordPress date permalinks,
+   `/2026/07/20/slug`. `reparentPagesByUrlPath` walks up to the nearest
+   *crawled* ancestor, but `/2026/07/20`, `/2026/07` and `/2026` are archive
+   routes that were never crawled, so it fell back to the homepage.
+   Template grouping did not catch them either: `detectUrlPattern` yields
+   `/2026/07/20/*`, which has one or two members, below the threshold of four.
+   The stored `depth` column was correct all along (`{0:1, 1:24, 2:24, 3:13}`);
+   nothing draws from it — dagre ranks by edges, and the edges come from
+   `parent_url`, which was flat.
+2. **Doubled slashes.** 9 of 62 URLs were stored as `https://sportbc.com//about`.
+   `//about` never matches `/about`, so the ancestor walk missed real parents,
+   the card printed `//about` back at the reader, and six pages were crawled
+   and screenshotted **twice**.
+
+### The fix
+`lib/hierarchy.ts` derives each node's parent from its URL path and invents
+`folderNode` cards for ancestors that were never crawled. Date runs collapse to
+the year, so `/2026/07/20/post` sits under `/2026` rather than adding three
+ranks of single-child date cards.
+
+It lives in the view, not the crawler, deliberately: no rows are written, so
+existing audits redraw correctly without being re-crawled — worth having, since
+a re-crawl of Sport BC costs one of five hourly slots and ten minutes.
+
+Result on the real data: ranks went from `{0:1, 1:58, 2:2, 3:1}` to
+`{0:1, 1:40, 2:25, 3:2, 4:1}`, 69 nodes and 68 edges, one root. aidolhouse.com
+gains a proper five-rank tree too, with pattern groups and folders side by side.
+
+Two incidental fixes fell out of it:
+- `normalizeUrl` in the crawler now collapses doubled slashes, so new crawls
+  stop creating the duplicates.
+- Ranks are top-aligned. Dagre returns centres, and a 90px folder card centred
+  against 900px page cards floated in the middle of the row.
+
+`getPathname` also collapses doubled slashes, so existing rows display cleanly.
+
+### Not done
+- [ ] Existing audits keep their duplicate rows; only a re-crawl clears them.
+- [ ] `/news/page/2` and `/bcamateursportfund/projects/page/2` are pagination
+      drawn as real depth. Arguably they should group, like template pages.
+
+---
+
 ## Session 2026-09-15 — approval-gated accounts; shares are now read-only
 
 Branch `feat/share-access-control`, not merged, not deployed, migration **not
