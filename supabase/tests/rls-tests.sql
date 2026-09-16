@@ -112,7 +112,7 @@ BEGIN
   PERFORM check_result('member CANNOT read audits not shared with them', n = 0, 'rows=' || n);
 
   -- ---------- owner ----------
-  PERFORM test_as(owner, 'muneeba.design@gmail.com');
+  PERFORM test_as(owner, 'mamuneeba@gmail.com');
 
   BEGIN
     INSERT INTO annotations (audit_id, type, position_x, position_y, color, stroke_color, font_size, z_index)

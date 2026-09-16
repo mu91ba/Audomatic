@@ -126,8 +126,14 @@ CREATE TRIGGER on_auth_user_email_changed
 -- access this migration exists to remove. The rule:
 --
 --   owns at least one audit            -> member   (demonstrably a real user)
---   the admin email                    -> admin
+--   either admin address               -> admin
 --   everything else                    -> viewer
+--
+-- Two admin addresses on purpose: mamuneeba@gmail.com is the working login and
+-- the account migration 015 backfilled the legacy audits to, while
+-- muneeba.design@gmail.com was created later and is not yet confirmed. Making
+-- only the unconfirmed one an admin would mean no usable admin if it is never
+-- confirmed. Drop whichever is redundant from /admin -> Accounts.
 --
 -- Anyone wrongly demoted is one click away in /admin. The NOTICE below lists
 -- them so the demotion is never silent.
@@ -137,7 +143,7 @@ SELECT
   u.id,
   u.email,
   CASE
-    WHEN lower(u.email) = 'muneeba.design@gmail.com' THEN 'admin'
+    WHEN lower(u.email) = ANY (ARRAY['mamuneeba@gmail.com', 'muneeba.design@gmail.com']) THEN 'admin'
     WHEN EXISTS (SELECT 1 FROM audits a WHERE a.user_id = u.id) THEN 'member'
     ELSE 'viewer'
   END
@@ -146,7 +152,8 @@ ON CONFLICT (id) DO NOTHING;
 
 -- Make sure the admin is an admin even if the row already existed.
 UPDATE app_users SET role = 'admin', updated_at = NOW()
-WHERE lower(email) = 'muneeba.design@gmail.com' AND role <> 'admin';
+WHERE lower(email) = ANY (ARRAY['mamuneeba@gmail.com', 'muneeba.design@gmail.com'])
+  AND role <> 'admin';
 
 DO $$
 DECLARE
@@ -170,9 +177,9 @@ BEGIN
   -- there would then be no way to approve anyone.
   IF account_count > 0 AND admin_count = 0 THEN
     RAISE EXCEPTION
-      'Migration 019 aborted: % accounts exist but none is an admin. muneeba.design@gmail.com '
-      'is not in auth.users — change the admin email in section 5 to an account that is, or '
-      'nobody can approve applications.', account_count;
+      'Migration 019 aborted: % accounts exist but none is an admin. Neither admin address '
+      'is in auth.users — change the list in section 5 to an account that is, or nobody can '
+      'approve applications.', account_count;
   END IF;
 
   IF account_count = 0 THEN
