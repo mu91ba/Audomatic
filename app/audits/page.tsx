@@ -7,6 +7,7 @@ import { supabase, type Audit, type AuditShare } from '@/lib/supabase'
 import { useAuth } from '@/components/auth/auth-provider'
 import { canCreateAudits } from '@/lib/role'
 import { AppHeader } from '@/components/app-header'
+import { BuiltBy } from '@/components/built-by'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -313,6 +314,8 @@ export default function AuditsPage() {
             })}
           </div>
         )}
+
+        <BuiltBy />
       </main>
     </div>
   )

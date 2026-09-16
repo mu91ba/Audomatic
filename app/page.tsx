@@ -6,6 +6,7 @@ import { Loader2, Sparkles, Globe } from 'lucide-react'
 import { useAuth } from '@/components/auth/auth-provider'
 import { LoginForm } from '@/components/auth/login-form'
 import { AppHeader } from '@/components/app-header'
+import { BuiltBy } from '@/components/built-by'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -144,6 +145,8 @@ export default function Home() {
                 <p className="text-muted-foreground">Annotations</p>
               </div>
             </div>
+
+            <BuiltBy />
           </div>
         </main>
       </div>
@@ -194,6 +197,8 @@ export default function Home() {
             </div>
           </div>
         </div>
+
+          <BuiltBy />
       </main>
     </div>
   )

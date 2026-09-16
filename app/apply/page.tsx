@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { AppHeader } from '@/components/app-header'
+import { BuiltBy } from '@/components/built-by'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -135,6 +136,8 @@ export default function ApplyPage() {
               </CardContent>
             </Card>
           )}
+
+          <BuiltBy />
         </div>
       </main>
     </div>
