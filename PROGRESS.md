@@ -8,6 +8,45 @@
 
 ---
 
+## Session 2026-09-16 — "Cannot coerce the result to a single JSON object"
+
+Invited viewers could open a shared audit once, then hit that error on every
+reload. Shipped straight to `main` because it needs no schema change; the
+access-control work it was found alongside stays on
+`feat/share-access-control` until migration `019` is applied.
+
+### Not an RLS problem
+The share rows were healthy — accepted, `shared_with_user_id` resolved, emails
+matching exactly. Replaying migrations `001`-`018` on a local cluster with the
+real rows copied from production returned **1 row for the invitee with a
+session, 0 without**. The policies were always right.
+
+### The race
+`app/audit/[id]/page.tsx` fired `loadAuditData()` from a `useEffect` keyed only
+on `auditId`, so it ran on mount. supabase-js restores and refreshes the session
+asynchronously, so that query goes out carrying only the anon key. Every SELECT
+policy on `audits` needs `auth.uid()`, so it matched zero rows — and `.single()`
+reports zero rows as "Cannot coerce the result to a single JSON object", which
+reads like corrupt data rather than "not signed in yet".
+
+`app/audits/page.tsx` never had the bug: it gates its query on `user`.
+
+Owners rarely hit it because they reach an audit from /audits with the session
+already in memory. An invited viewer opens /audit/<id> straight from the invite
+email — a cold load every time, and `detectSessionInUrl` has to parse the tokens
+out of the hash first, which is strictly slower than the query firing.
+
+### Fix
+Wait for `authLoading`, re-run when the account changes, and use `.maybeSingle()`
+so zero rows becomes "this audit doesn't exist, or it hasn't been shared with the
+account you're signed in as" — also the honest message when a share is revoked or
+a link is wrong. Not signed in at all now says so.
+
+The canvas, token panel and share modal all mount only after the audit has
+loaded, so they inherit the gate.
+
+---
+
 ## Session 2026-09-13 (docs) — consolidated the markdown
 
 Five documents described five different versions of this project, three of them

@@ -182,6 +182,13 @@ ssh root@77.37.67.72 "tail /root/backups/backup.log"
 
 Each of these cost real debugging time. Read before changing the related area.
 
+- **Query only after the session resolves.** supabase-js restores and refreshes
+  the session asynchronously, so a Supabase call fired from a `useEffect` on
+  mount goes out with just the anon key and every RLS-protected table returns
+  zero rows. With `.single()` that surfaces as "Cannot coerce the result to a
+  single JSON object", which looks nothing like an auth problem. Gate on
+  `loading` from `useAuth()`, as `/audits` does, and prefer `.maybeSingle()`
+  wherever RLS filtering everything out is a legitimate outcome.
 - **Never create a Supabase Storage bucket.** Screenshots live in R2. An
   unbounded `screenshots` bucket is what exhausted the old project's 1 GB quota
   and took the site down. Migration `001`'s bucket statements are deliberately
