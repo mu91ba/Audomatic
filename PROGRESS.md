@@ -8,6 +8,48 @@
 
 ---
 
+## Session 2026-09-16 (deploy) — 019 applied, everything shipped
+
+All of it is live. Migration `019`, the access-control app, the URL-path
+hierarchy and the crawler's slash fix.
+
+The database password was the thing blocking me from doing this without help,
+and it turned out to be on the VPS all along: `/root/.sightmap-backup.env` holds
+the Postgres connection details, because the nightly `pg_dump` needs them, and
+`psql` is installed there. **That box is how migrations get applied.**
+
+Order, deliberately:
+1. Fresh `pg_dump` first (`sightmap-20260916-1755.sql.gz`, also copied to the
+   private R2 bucket) so `019` was reversible.
+2. `019` dry-run inside `BEGIN … ROLLBACK` to see the NOTICEs and the resulting
+   roles without committing.
+3. Applied for real. `dawn@make10.co` and `muneeba@make10.co` became viewers,
+   both admin addresses became admins.
+4. `rlstest-1789335647@example.com` demoted to viewer — the backfill made it a
+   member because it owns one audit, but it is a leftover test account that has
+   never signed in.
+5. App deployed, then the crawler (nothing was mid-crawl; previous files backed
+   up to `backups/2026-09-16/`).
+
+Verified against production: all four pages 200; a real POST to
+`/api/request-access` returns `{"success":true}` and the row is visible to the
+service key but `[]` to the anon key; both admin routes 401 unauthenticated;
+`app_users` has exactly one policy (SELECT) and `access_requests` none at all,
+which with RLS on means no client role can touch it. The test application row
+was deleted afterwards.
+
+Signups were already off in the dashboard (`disable_signup: true`).
+
+### Still open
+- [ ] The 6 duplicate rows on the Sport BC audit. `normalizeUrl` stops new ones,
+      but clearing these needs a re-crawl, and that has to go through the UI:
+      deleting an audit directly would orphan its screenshots in R2, and
+      `/api/delete-audit` needs a signed-in session, which is the owner's.
+- [ ] Nothing pushed to git. `main` and `feat/share-access-control` are both
+      ahead of their remotes.
+
+---
+
 ## Session 2026-09-16 — "Cannot coerce the result to a single JSON object"
 
 Invited viewers could open a shared audit once, then got that error on every

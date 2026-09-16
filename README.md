@@ -213,10 +213,10 @@ at 03:30 UTC via cron:
 - gzipped to `/root/backups/db/`, newest 14 kept
 - optionally copied to the **private** `sightmap-backups` R2 bucket
 
-Config is `/root/.sightmap-backup.env` (chmod 600). Off-site upload is disabled
-until `R2_BACKUP_ACCESS_KEY_ID` / `R2_BACKUP_SECRET_ACCESS_KEY` are filled in —
-the screenshots token will not work, as it is scoped to that bucket. Without
-them the script still writes a local dump and exits clean.
+Config is `/root/.sightmap-backup.env` (chmod 600), which also holds the only
+copy of the Postgres connection details — `psql`/`pg_dump` run from the VPS, so
+that box is how migrations get applied. Off-site upload to the private
+`sightmap-backups` bucket is enabled.
 
 Backups must never go in `sightmap-screenshots`: that bucket is public via
 img.qanvos.com, so a dump there would be publicly downloadable.
@@ -325,16 +325,18 @@ Deleting an audit reclaims both.
       equivalents should be reviewed if the project gains collaborators.
 
 **Housekeeping**
-- [ ] **Turn off signups in Supabase** — Authentication → Sign In / Providers →
-      Email → disable "Allow new users to sign up". Removing the form from the
-      UI does not close `/auth/v1/signup`; migration `019` is the backstop that
-      leaves any account created behind the app's back as a `viewer`.
+- [x] **Signups are off in Supabase** (`disable_signup: true`). Removing the
+      form from the UI does not close `/auth/v1/signup`; migration `019` is the
+      backstop that leaves any account created behind the app's back as a
+      `viewer`.
 - [x] `debug/shopify-crawl-fix` — merged. It and `main` are both at `902cc46`;
       the "16 commits ahead" note was stale.
 - [ ] Rotate the Supabase service-role key and R2 token if the setup transcript
       was shared.
-- [ ] Fill in `R2_BACKUP_*` in `/root/.sightmap-backup.env` to enable off-site
-      backup copies (needs a new R2 token scoped to `sightmap-backups`).
+- [ ] `crawler-service/supabase.js` exists on the VPS but not in git, and
+      nothing requires it — dead since Oct 2025. Safe to delete on the box.
+- [x] `R2_BACKUP_*` is filled in; backups now copy off-site to the private
+      `sightmap-backups` bucket.
 
 **Product ideas** (unchanged from the original roadmap)
 - [ ] Expose shape annotations in the toolbar (they exist, unexposed)
